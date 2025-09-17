@@ -87,11 +87,13 @@ if [[ ! -d "$OUTPUT_DIR" ]]; then
     exit 1
 fi
 
+
 LICENSE_PATH=$(jq -r .fs_license "$CONFIG")
 if [[ ! -f "$LICENSE_PATH" ]]; then
     echo "Error: FreeSurfer license file '$LICENSE_PATH' does not exist."
     exit 1
 fi
+LICENSE_DIR=$(dirname "$LICENSE_PATH")
 
 # Parse options from JSON config (except sid, t1, py)
 parse_json_options() {
@@ -147,7 +149,7 @@ for t1w_img in "${T1W_LIST[@]}"; do
         --no-home \
         -B "$BIDS_DATA":/data \
         -B "$OUTPUT_DIR":/output \
-        -B "$LICENSE_PATH":/fs_license \
+        -B "$LICENSE_DIR":/fs_license \
         "$SIF_FILE" \
         /fastsurfer/run_fastsurfer.sh \
         --t1 "/data/$(basename "$t1w_img")" \
