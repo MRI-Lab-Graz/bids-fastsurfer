@@ -111,12 +111,17 @@ find "$BIDS_DATA" -type f \( -name "*_T1w.nii" -o -name "*_T1w.nii.gz" -o -name 
     fi
 
     # Always set --sid, --t1, --sd, --fs_license, --3T
+    SIF_FILE=$(jq -r .sif_file "$CONFIG")
+    if [[ ! -f "$SIF_FILE" ]]; then
+        echo "Error: Singularity image file '$SIF_FILE' does not exist."
+        exit 1
+    fi
     cmd="singularity exec --nv \
         --no-home \
         -B \"$BIDS_DATA\":/data \
         -B \"$OUTPUT_DIR\":/output \
-        -B \"$(jq -r .fs_license "$CONFIG")\":/fs_license \
-        ./fastsurfer-gpu.sif \
+        -B \"$(jq -r .fs_license \"$CONFIG\")\":/fs_license \
+        $SIF_FILE \
         /fastsurfer/run_fastsurfer.sh \
         --t1 /data/$(basename \"$t1w_img\") \
         --sid \"$sid\" \

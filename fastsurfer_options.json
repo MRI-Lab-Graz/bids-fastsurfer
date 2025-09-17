@@ -1,5 +1,6 @@
 {
   "fs_license": "<path/to/license.txt>",
+  "sif_file": "/path/to/fastsurfer-gpu.sif",
   "vox_size": "min",
   "edits": false,
   "seg_only": true,
