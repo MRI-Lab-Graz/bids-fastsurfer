@@ -145,6 +145,8 @@ for t1w_img in "${T1W_LIST[@]}"; do
         echo "Error: Singularity image file '$SIF_FILE' does not exist."
         exit 1
     fi
+    # Compute relative path from BIDS_DATA to t1w_img
+    t1w_relpath="${t1w_img#$BIDS_DATA/}"
     cmd=(singularity exec --nv \
         --no-home \
         -B "$BIDS_DATA":/data \
@@ -152,7 +154,7 @@ for t1w_img in "${T1W_LIST[@]}"; do
         -B "$LICENSE_DIR":/fs_license \
         "$SIF_FILE" \
         /fastsurfer/run_fastsurfer.sh \
-        --t1 "/data/$(basename "$t1w_img")" \
+        --t1 "/data/$t1w_relpath" \
         --sid "$sid" \
         --sd /output \
         --fs_license /fs_license/license.txt \
