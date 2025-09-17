@@ -36,8 +36,10 @@ BIDS_DATA="$1"
 OUTPUT_DIR="$2"
 shift 2
 
+
 CONFIG=""
 DRY_RUN=0
+
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -56,6 +58,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Resolve CONFIG to absolute path
+if [[ -n "$CONFIG" && ! "$CONFIG" =~ ^/ ]]; then
+    CONFIG="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
+fi
+
 
 # Check required arguments
 if [[ -z "$BIDS_DATA" || -z "$OUTPUT_DIR" || -z "$CONFIG" ]]; then
@@ -72,6 +79,7 @@ if [[ ! -d "$OUTPUT_DIR" ]]; then
     echo "Error: Output directory '$OUTPUT_DIR' does not exist."
     exit 1
 fi
+
 LICENSE_PATH=$(jq -r .fs_license "$CONFIG")
 if [[ ! -f "$LICENSE_PATH" ]]; then
     echo "Error: FreeSurfer license file '$LICENSE_PATH' does not exist."
@@ -120,7 +128,7 @@ find "$BIDS_DATA" -type f \( -name "*_T1w.nii" -o -name "*_T1w.nii.gz" -o -name 
         --no-home \
         -B \"$BIDS_DATA\":/data \
         -B \"$OUTPUT_DIR\":/output \
-        -B \"$(jq -r .fs_license \"$CONFIG\")\":/fs_license \
+        -B \"$LICENSE_PATH\":/fs_license \
         $SIF_FILE \
         /fastsurfer/run_fastsurfer.sh \
         --t1 /data/$(basename \"$t1w_img\") \
