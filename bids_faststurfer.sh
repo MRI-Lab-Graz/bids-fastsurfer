@@ -38,7 +38,9 @@ shift 2
 
 
 CONFIG=""
+
 DRY_RUN=0
+PILOT=0
 
 
 while [[ $# -gt 0 ]]; do
@@ -49,6 +51,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dry_run)
             DRY_RUN=1
+            shift
+            ;;
+
+        --pilot)
+            PILOT=1
             shift
             ;;
         *)
@@ -91,8 +98,20 @@ parse_json_options() {
     jq -r 'to_entries[] | select(.value != null and .value != false and .value != "") | "--" + .key + (if (.value|type) == "boolean" then "" else " \"" + (.value|tostring) + "\"" end)' "$1"
 }
 
-# Find all T1w images (including preproc)
-find "$BIDS_DATA" -type f \( -name "*_T1w.nii" -o -name "*_T1w.nii.gz" -o -name "*_desc-preproc_T1w.nii.gz" \) | while read -r t1w_img; do
+T1W_LIST=( $(find "$BIDS_DATA" -type f \( -name "*_T1w.nii" -o -name "*_T1w.nii.gz" -o -name "*_desc-preproc_T1w.nii.gz" \)) )
+
+# If --pilot, randomly pick one T1w image
+if [[ $PILOT -eq 1 ]]; then
+    if [[ ${#T1W_LIST[@]} -eq 0 ]]; then
+        echo "No T1w images found."
+        exit 1
+    fi
+    RANDOM_IDX=$(( RANDOM % ${#T1W_LIST[@]} ))
+    T1W_LIST=( "${T1W_LIST[$RANDOM_IDX]}" )
+    echo "[PILOT MODE] Only processing: ${T1W_LIST[0]}"
+fi
+
+for t1w_img in "${T1W_LIST[@]}"; do
     fname=$(basename "$t1w_img")
     subj=$(echo "$fname" | grep -o 'sub-[^_]*')
     sess=$(echo "$fname" | grep -o 'ses-[^_]*')
