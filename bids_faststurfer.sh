@@ -95,9 +95,9 @@ if [[ ! -f "$LICENSE_PATH" ]]; then
 fi
 LICENSE_DIR=$(dirname "$LICENSE_PATH")
 
-# Parse options from JSON config (except sid, t1, py, and fs_license)
+# Parse options from JSON config (except sid, t1, py, fs_license, and sif_file)
 parse_json_options() {
-    jq -r 'to_entries[] | select(.key != "fs_license" and .value != null and .value != false and .value != "") | "--" + .key + (if (.value|type) == "boolean" then "" else " " + (.value|tostring) end)' "$1"
+    jq -r 'to_entries[] | select(.key != "fs_license" and .key != "sif_file" and .value != null and .value != false and .value != "") | "--" + .key + (if (.value|type) == "boolean" then "" else " " + (.value|tostring) end)' "$1"
 }
 
 T1W_LIST=( $(find "$BIDS_DATA" -type f \( -name "*_T1w.nii" -o -name "*_T1w.nii.gz" -o -name "*_desc-preproc_T1w.nii.gz" \)) )
