@@ -145,8 +145,12 @@ for t1w_img in "${T1W_LIST[@]}"; do
         echo "Error: Singularity image file '$SIF_FILE' does not exist."
         exit 1
     fi
+    # Ensure BIDS_DATA ends with a single slash
+    BIDS_DATA_SLASH="$BIDS_DATA"
+    [[ "${BIDS_DATA_SLASH}" != */ ]] && BIDS_DATA_SLASH="${BIDS_DATA_SLASH}/"
     # Compute relative path from BIDS_DATA to t1w_img
-    t1w_relpath="${t1w_img#$BIDS_DATA/}"
+    t1w_relpath="${t1w_img#${BIDS_DATA_SLASH}}"
+    echo "DEBUG: Using --t1 /data/$t1w_relpath"
     cmd=(singularity exec --nv \
         --no-home \
         -B "$BIDS_DATA":/data \
