@@ -1,6 +1,29 @@
 #!/bin/bash
 
+
 # Usage: ./bids_fastsurfer.sh /bids-folder /outputfolder -c fastsurfer_options.json [--dry_run]
+#
+# Arguments:
+#   /bids-folder           Path to BIDS input directory
+#   /outputfolder          Path to output directory
+#   -c <config.json>       Path to JSON config file with FastSurfer options
+#   --dry_run              (Optional) Print the Singularity command instead of running it
+#
+# Example:
+#   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --dry_run
+
+# Show help if no arguments are provided
+if [[ $# -eq 0 ]]; then
+    echo "\nUsage: $0 <bids_data_dir> <output_dir> -c <config.json> [--dry_run]"
+    echo "\nArguments:"
+    echo "  <bids_data_dir>   Path to BIDS input directory"
+    echo "  <output_dir>      Path to output directory"
+    echo "  -c <config.json>  Path to JSON config file with FastSurfer options"
+    echo "  --dry_run         (Optional) Print the Singularity command instead of running it"
+    echo "\nExample:"
+    echo "  $0 ./data ./output -c fastsurfer_options.json --dry_run"
+    exit 0
+fi
 
 set -e
 
@@ -33,8 +56,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+
+# Check required arguments
 if [[ -z "$BIDS_DATA" || -z "$OUTPUT_DIR" || -z "$CONFIG" ]]; then
     echo "Usage: $0 <bids_data_dir> <output_dir> -c <config.json> [--dry_run]"
+    exit 1
+fi
+
+# Check if input/output folders and license file exist
+if [[ ! -d "$BIDS_DATA" ]]; then
+    echo "Error: BIDS input directory '$BIDS_DATA' does not exist."
+    exit 1
+fi
+if [[ ! -d "$OUTPUT_DIR" ]]; then
+    echo "Error: Output directory '$OUTPUT_DIR' does not exist."
+    exit 1
+fi
+LICENSE_PATH=$(jq -r .fs_license "$CONFIG")
+if [[ ! -f "$LICENSE_PATH" ]]; then
+    echo "Error: FreeSurfer license file '$LICENSE_PATH' does not exist."
     exit 1
 fi
 
