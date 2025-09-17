@@ -95,7 +95,7 @@ fi
 
 # Parse options from JSON config (except sid, t1, py)
 parse_json_options() {
-    jq -r 'to_entries[] | select(.value != null and .value != false and .value != "") | "--" + .key + (if (.value|type) == "boolean" then "" else " \"" + (.value|tostring) + "\"" end)' "$1"
+    jq -r 'to_entries[] | select(.value != null and .value != false and .value != "") | "--" + .key + (if (.value|type) == "boolean" then "" else " " + (.value|tostring) end)' "$1"
 }
 
 T1W_LIST=( $(find "$BIDS_DATA" -type f \( -name "*_T1w.nii" -o -name "*_T1w.nii.gz" -o -name "*_desc-preproc_T1w.nii.gz" \)) )
@@ -143,23 +143,30 @@ for t1w_img in "${T1W_LIST[@]}"; do
         echo "Error: Singularity image file '$SIF_FILE' does not exist."
         exit 1
     fi
-    cmd="singularity exec --nv \
+    cmd=(singularity exec --nv \
         --no-home \
-        -B \"$BIDS_DATA\":/data \
-        -B \"$OUTPUT_DIR\":/output \
-        -B \"$LICENSE_PATH\":/fs_license \
-        $SIF_FILE \
+        -B "$BIDS_DATA":/data \
+        -B "$OUTPUT_DIR":/output \
+        -B "$LICENSE_PATH":/fs_license \
+        "$SIF_FILE" \
         /fastsurfer/run_fastsurfer.sh \
-        --t1 /data/$(basename \"$t1w_img\") \
-        --sid \"$sid\" \
+        --t1 "/data/$(basename "$t1w_img")" \
+        --sid "$sid" \
         --sd /output \
         --fs_license /fs_license/license.txt \
-        --3T $extra_opts"
+        --3T)
+    # Add extra options, splitting on spaces
+    if [[ -n "$extra_opts" ]]; then
+        # shellcheck disable=SC2206
+        extra_opts_arr=($extra_opts)
+        cmd+=("${extra_opts_arr[@]}")
+    fi
 
     echo "Processing $t1w_img with --sid $sid"
     if [[ $DRY_RUN -eq 1 ]]; then
-        echo "$cmd"
+        printf '%q ' "${cmd[@]}"
+        echo
     else
-        eval $cmd
+        "${cmd[@]}"
     fi
 done
