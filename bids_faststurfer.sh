@@ -1,27 +1,32 @@
 #!/bin/bash
 
 
-# Usage: ./bids_fastsurfer.sh /bids-folder /outputfolder -c fastsurfer_options.json [--dry_run]
+
+# Usage: ./bids_fastsurfer.sh /bids-folder /outputfolder -c fastsurfer_options.json [--dry_run] [--pilot] [--debug]
 #
 # Arguments:
 #   /bids-folder           Path to BIDS input directory
 #   /outputfolder          Path to output directory
 #   -c <config.json>       Path to JSON config file with FastSurfer options
 #   --dry_run              (Optional) Print the Singularity command instead of running it
+#   --pilot                (Optional) Randomly pick only one subject for testing
+#   --debug                (Optional) Print debug information about parsed options and paths
 #
 # Example:
-#   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --dry_run
+#   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --pilot --dry_run --debug
 
 # Show help if no arguments are provided
 if [[ $# -eq 0 ]]; then
-    echo "\nUsage: $0 <bids_data_dir> <output_dir> -c <config.json> [--dry_run]"
+    echo "\nUsage: $0 <bids_data_dir> <output_dir> -c <config.json> [--dry_run] [--pilot] [--debug]"
     echo "\nArguments:"
     echo "  <bids_data_dir>   Path to BIDS input directory"
     echo "  <output_dir>      Path to output directory"
     echo "  -c <config.json>  Path to JSON config file with FastSurfer options"
     echo "  --dry_run         (Optional) Print the Singularity command instead of running it"
+    echo "  --pilot           (Optional) Randomly pick only one subject for testing"
+    echo "  --debug           (Optional) Print debug information about parsed options and paths"
     echo "\nExample:"
-    echo "  $0 ./data ./output -c fastsurfer_options.json --dry_run"
+    echo "  $0 ./data ./output -c fastsurfer_options.json --pilot --dry_run --debug"
     exit 0
 fi
 
@@ -39,8 +44,10 @@ shift 2
 
 CONFIG=""
 
+
 DRY_RUN=0
 PILOT=0
+DEBUG=0
 
 
 while [[ $# -gt 0 ]]; do
@@ -56,6 +63,10 @@ while [[ $# -gt 0 ]]; do
 
         --pilot)
             PILOT=1
+            shift
+            ;;
+        --debug)
+            DEBUG=1
             shift
             ;;
         *)
@@ -131,8 +142,13 @@ for t1w_img in "${T1W_LIST[@]}"; do
     fi
     t2w_img=$(find "$BIDS_DATA" -type f -name "${t2_pattern}_*T2w.nii.gz" | head -n1)
 
+
     # Build options from JSON config
+
     extra_opts=$(parse_json_options "$CONFIG")
+    if [[ $DEBUG -eq 1 ]]; then
+        echo "DEBUG: Extra options from JSON: $extra_opts"
+    fi
 
     # If t2w_img exists, add --t2
     if [[ -n "$t2w_img" ]]; then
@@ -150,7 +166,9 @@ for t1w_img in "${T1W_LIST[@]}"; do
     [[ "${BIDS_DATA_SLASH}" != */ ]] && BIDS_DATA_SLASH="${BIDS_DATA_SLASH}/"
     # Compute relative path from BIDS_DATA to t1w_img
     t1w_relpath="${t1w_img#${BIDS_DATA_SLASH}}"
-    echo "DEBUG: Using --t1 /data/$t1w_relpath"
+    if [[ $DEBUG -eq 1 ]]; then
+        echo "DEBUG: Using --t1 /data/$t1w_relpath"
+    fi
     cmd=(singularity exec --nv \
         --no-home \
         -B "$BIDS_DATA":/data \
