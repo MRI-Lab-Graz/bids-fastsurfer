@@ -121,9 +121,10 @@ if [[ ! -f "$LICENSE_PATH" ]]; then
 fi
 LICENSE_DIR=$(dirname "$LICENSE_PATH")
 
-# Parse options from JSON config (except sid, t1, py, fs_license, and sif_file)
-parse_json_options() {
-    jq -r 'to_entries[] | select(.key != "fs_license" and .key != "sif_file" and .value != null and .value != false and .value != "") | "--" + .key + (if (.value|type) == "boolean" then "" else " " + (.value|tostring) end)' "$1"
+
+# Parse options from JSON config (except sid, t1, py, fs_license, and sif_file) from 'cross' section
+parse_json_options_cross() {
+    jq -r '.cross | to_entries[] | select(.key != "fs_license" and .key != "sif_file" and .value != null and .value != false and .value != "") | "--" + .key + (if (.value|type) == "boolean" then "" else " " + (.value|tostring) end)' "$1"
 }
 
 
@@ -194,7 +195,7 @@ for t1w_img in "${T1W_LIST[@]}"; do
 
     # Build options from JSON config
 
-    extra_opts=$(parse_json_options "$CONFIG")
+    extra_opts=$(parse_json_options_cross "$CONFIG")
     if [[ $DEBUG -eq 1 ]]; then
         echo "DEBUG: Extra options from JSON: $extra_opts"
     fi

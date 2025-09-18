@@ -1,21 +1,22 @@
-# Parse options from JSON config (except tid, t1s, tpids, py, sd)
-parse_json_options() {
-	jq -r 'to_entries[] | select(.key != "tid" and .key != "t1s" and .key != "tpids" and .key != "py" and .key != "sd" and .value != null and .value != false and .value != "") | "--" + .key + (if (.value|type) == "boolean" then "" else " " + (.value|tostring) end)' "$1"
+
+# Parse options from JSON config (except tid, t1s, tpids, py, sd) from 'long' section
+parse_json_options_long() {
+    jq -r '.long | to_entries[] | select(.key != "tid" and .key != "t1s" and .key != "tpids" and .key != "py" and .key != "sd" and .value != null and .value != false and .value != "") | "--" + .key + (if (.value|type) == "boolean" then "" else " " + (.value|tostring) end)' "$1"
 }
 
-# Get SIF file and license from config
+# Get SIF file and license from config (top-level)
 SIF_FILE=$(jq -r .sif_file "$CONFIG")
 LICENSE_PATH=$(jq -r .fs_license "$CONFIG")
 if [[ ! -f "$SIF_FILE" ]]; then
-	echo "Error: Singularity image file '$SIF_FILE' does not exist."; exit 1
+    echo "Error: Singularity image file '$SIF_FILE' does not exist."; exit 1
 fi
 if [[ ! -f "$LICENSE_PATH" ]]; then
-	echo "Error: FreeSurfer license file '$LICENSE_PATH' does not exist."; exit 1
+    echo "Error: FreeSurfer license file '$LICENSE_PATH' does not exist."; exit 1
 fi
 LICENSE_DIR=$(dirname "$LICENSE_PATH")
 
-# Build extra options from config
-EXTRA_OPTS=$(parse_json_options "$CONFIG")
+# Build extra options from config (long section)
+EXTRA_OPTS=$(parse_json_options_long "$CONFIG")
 
 # Build command
 cmd=(singularity exec --nv \
