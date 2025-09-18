@@ -20,6 +20,7 @@ Required:
   --tid SUBJECT        Template subject (switches to manual mode when used with --tpids).
 
 Optional:
+  --pilot              (Auto mode) Randomly select one eligible longitudinal subject (>=2 sessions) and process only that subject.
   --dry_run            Print the Singularity command only.
   --debug              Verbose internal debug output.
 
@@ -65,6 +66,10 @@ Examples:
   bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
     -c fastsurfer_options.json --dry_run
 
+  # Pilot (one random longitudinal subject)
+  bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
+    -c fastsurfer_options.json --pilot --dry_run
+
 EOF
 }
 
@@ -78,6 +83,7 @@ TEMPLATE_SUBJECT=""
 declare -a TPIDS=()
 DRY_RUN=0
 DEBUG=0
+PILOT=0
 PYTHON_CMD="python3"
 # AUTO default: enabled unless user provides --tid/--tpids
 AUTO=1
@@ -108,6 +114,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     --auto) # retained for backward compatibility; no-op now (auto is default)
       AUTO=1; shift ;;
+    --pilot)
+      PILOT=1; shift ;;
     --dry_run)
       DRY_RUN=1; shift ;;
     --debug)
@@ -175,6 +183,12 @@ if [[ $AUTO -eq 0 ]]; then
     echo "Error: Manual mode requires at least one --tpids entry (sub-XXX_ses-YYY)." >&2
     exit 1
   fi
+fi
+
+# --pilot only valid in auto mode
+if [[ $PILOT -eq 1 && $AUTO -eq 0 ]]; then
+  echo "Error: --pilot can only be used in auto mode (omit --tid/--tpids)." >&2
+  exit 1
 fi
 
 ############################################
@@ -263,109 +277,61 @@ if [[ $AUTO -eq 0 ]]; then
   if [[ $DRY_RUN -eq 1 ]]; then echo "[DRY RUN] Not executing."; exit 0; fi
   "${cmd[@]}"
 else
-  # Auto mode: iterate subjects with >=2 sessions
-  echo "[AUTO] Default auto-detection: scanning subjects with >=2 sessions..."
+  # Auto mode (with optional pilot)
   shopt -s nullglob
-  subj_dirs=("${BIDS_ROOT%/}"/sub-*)
-  if [[ ${#subj_dirs[@]} -eq 0 ]]; then
-    echo "[AUTO] No subjects (sub-*) found in ${BIDS_ROOT}"; exit 1
-  fi
-  total_processed=0
-  for subj_path in "${subj_dirs[@]}"; do
-    [[ -d "$subj_path" ]] || continue
-    subj=$(basename "$subj_path")
-    # gather sessions
-    mapfile -t sessions < <(find "$subj_path" -maxdepth 1 -type d -name 'ses-*' -exec basename {} \; | sort)
-    if [[ ${#sessions[@]} -lt 2 ]]; then
-      [[ $DEBUG -eq 1 ]] && echo "[AUTO][SKIP] $subj has <2 sessions"
-      continue
-    fi
-    # Build TPIDs and T1 paths
-    TPIDS_LOCAL=()
-    T1_PATHS_LOCAL=()
-    missing_any=0
-    for ses in "${sessions[@]}"; do
-      anat_dir="$subj_path/$ses/anat"
-      if [[ ! -d "$anat_dir" ]]; then
-        echo "[AUTO][WARN] Missing anat dir for $subj $ses; skipping subject."; missing_any=1; break
-      fi
-      t1_candidate=$(ls -1 "$anat_dir"/*_T1w.nii.gz 2>/dev/null | head -n1 || true)
-      if [[ -z "$t1_candidate" ]]; then
-        t1_candidate=$(ls -1 "$anat_dir"/*_T1w.nii 2>/dev/null | head -n1 || true)
-      fi
-      if [[ -z "$t1_candidate" ]]; then
-        echo "[AUTO][WARN] No T1w for $subj $ses; skipping subject."; missing_any=1; break
-      fi
-      rel="${t1_candidate#${BIDS_ROOT%/}/}"
-      container_t1="/data/${rel}"
-      TPIDS_LOCAL+=("${subj}_${ses}")
-      T1_PATHS_LOCAL+=("${container_t1}")
-    done
-    if [[ $missing_any -eq 1 ]]; then continue; fi
-    if [[ ${#TPIDS_LOCAL[@]} -lt 2 ]]; then
-      [[ $DEBUG -eq 1 ]] && echo "[AUTO][SKIP] $subj fewer than 2 valid T1 timepoints"
-      continue
-    fi
-    # Build command per subject
-  cmd=( singularity exec --nv --no-home -B "${BIDS_ROOT%/}":/data -B "${OUTPUT_DIR%/}":/output -B "${LICENSE_DIR}":/fs_license "${SIF_FILE}" /fastsurfer/long_fastsurfer.sh --tid "$subj" --t1s "${T1_PATHS_LOCAL[@]}" --tpids "${TPIDS_LOCAL[@]}" --sd /output --fs_license /fs_license/license.txt --py "${PYTHON_CMD}" )
-    if [[ ${#LONG_OPTS[@]} -gt 0 ]]; then cmd+=( "${LONG_OPTS[@]}" ); fi
-    echo "[AUTO] Subject $subj with ${#TPIDS_LOCAL[@]} sessions -> TPIDs: ${TPIDS_LOCAL[*]}"
-    printf '  CMD:'; printf ' %q' "${cmd[@]}"; echo
-    if [[ $DRY_RUN -eq 1 ]]; then
-      continue
+  all_subj=("${BIDS_ROOT%/}"/sub-*)
+  if [[ ${#all_subj[@]} -eq 0 ]]; then echo "[AUTO] No subjects found."; exit 1; fi
+  eligible=()
+  for sp in "${all_subj[@]}"; do
+    [[ -d "$sp" ]] || continue
+    sbase=$(basename "$sp")
+    mapfile -t ses_list < <(find "$sp" -maxdepth 1 -type d -name 'ses-*' -exec basename {} \; | sort)
+    if [[ ${#ses_list[@]} -ge 2 ]]; then
+      eligible+=("$sp")
     else
-      "${cmd[@]}"
-      total_processed=$((total_processed+1))
+      [[ $DEBUG -eq 1 ]] && echo "[AUTO][SKIP] $sbase has <2 sessions"
     fi
   done
-  if [[ $DRY_RUN -eq 1 ]]; then
-    echo "[AUTO][DRY RUN] Completed listing commands."
+  if [[ ${#eligible[@]} -eq 0 ]]; then echo "[AUTO] No longitudinal subjects (>=2 sessions)"; exit 1; fi
+  if [[ $PILOT -eq 1 ]]; then
+    pick_idx=$(( RANDOM % ${#eligible[@]} ))
+    echo "[AUTO][PILOT] Selected $(basename "${eligible[$pick_idx]}") from ${#eligible[@]} eligible subjects"
+    subjects=("${eligible[$pick_idx]}")
   else
-    echo "[AUTO] Processed $total_processed subjects with longitudinal data."
+    echo "[AUTO] Processing ${#eligible[@]} eligible subjects"
+    subjects=("${eligible[@]}")
+  fi
+  total_processed=0
+  for sp in "${subjects[@]}"; do
+    sbase=$(basename "$sp")
+    mapfile -t ses_list < <(find "$sp" -maxdepth 1 -type d -name 'ses-*' -exec basename {} \; | sort)
+    TPIDS_LOCAL=()
+    T1_PATHS_LOCAL=()
+    skip=0
+    for ses in "${ses_list[@]}"; do
+      anat_dir="$sp/$ses/anat"
+      if [[ ! -d "$anat_dir" ]]; then echo "[AUTO][WARN] Missing anat for $sbase $ses -> skip subject"; skip=1; break; fi
+      t1=$(ls -1 "$anat_dir"/*_T1w.nii.gz 2>/dev/null | head -n1 || true)
+      [[ -z "$t1" ]] && t1=$(ls -1 "$anat_dir"/*_T1w.nii 2>/dev/null | head -n1 || true)
+      if [[ -z "$t1" ]]; then echo "[AUTO][WARN] No T1w for $sbase $ses -> skip subject"; skip=1; break; fi
+      rel="${t1#${BIDS_ROOT%/}/}"; container_t1="/data/${rel}"
+      TPIDS_LOCAL+=("${sbase}_${ses}")
+      T1_PATHS_LOCAL+=("${container_t1}")
+    done
+    [[ $skip -eq 1 ]] && continue
+    if [[ ${#TPIDS_LOCAL[@]} -lt 2 ]]; then [[ $DEBUG -eq 1 ]] && echo "[AUTO][SKIP] $sbase insufficient valid sessions"; continue; fi
+    cmd=( singularity exec --nv --no-home -B "${BIDS_ROOT%/}":/data -B "${OUTPUT_DIR%/}":/output -B "${LICENSE_DIR}":/fs_license "${SIF_FILE}" /fastsurfer/long_fastsurfer.sh --tid "$sbase" --t1s "${T1_PATHS_LOCAL[@]}" --tpids "${TPIDS_LOCAL[@]}" --sd /output --fs_license /fs_license/license.txt --py "${PYTHON_CMD}" )
+    if [[ ${#LONG_OPTS[@]} -gt 0 ]]; then cmd+=("${LONG_OPTS[@]}"); fi
+    echo "[AUTO] Subject $sbase (${#TPIDS_LOCAL[@]} sessions)"
+    printf '  CMD:'; printf ' %q' "${cmd[@]}"; echo
+    if [[ $DRY_RUN -eq 1 ]]; then continue; fi
+    "${cmd[@]}" && total_processed=$((total_processed+1))
+  done
+  if [[ $DRY_RUN -eq 1 ]]; then
+    echo "[AUTO][DRY RUN] Done."
+  else
+    echo "[AUTO] Processed $total_processed subject(s)."
   fi
 fi
 
-############################################
-# Build Singularity Command
-############################################
-cmd=( singularity exec --nv --no-home
-      -B "${BIDS_ROOT%/}":/data
-      -B "${OUTPUT_DIR%/}":/output
-      -B "${LICENSE_DIR}":/fs_license
-      "${SIF_FILE}"
-      /fastsurfer/long_fastsurfer.sh
-      --tid "${TEMPLATE_SUBJECT}"
-      --t1s "${T1_PATHS[@]}"
-      --tpids "${TPIDS[@]}"
-      --sd /output
-      --fs_license /fs_license/license.txt
-)
-
-# Append long opts
-if [[ ${#LONG_OPTS[@]} -gt 0 ]]; then
-  cmd+=( "${LONG_OPTS[@]}" )
-fi
-
-############################################
-# Debug / Dry Run / Execute
-############################################
-if [[ $DEBUG -eq 1 ]]; then
-  echo "[DEBUG] TEMPLATE_SUBJECT: ${TEMPLATE_SUBJECT}"
-  echo "[DEBUG] TPIDS: ${TPIDS[*]}"
-  echo "[DEBUG] T1_PATHS (container): ${T1_PATHS[*]}"
-  echo "[DEBUG] LONG_OPTS: ${LONG_OPTS[*]}"
-  echo "[DEBUG] Singularity image: ${SIF_FILE}"
-  echo "[DEBUG] License: ${FS_LICENSE}"
-fi
-
-echo "Running longitudinal FastSurfer for template '${TEMPLATE_SUBJECT}' with ${#TPIDS[@]} timepoints."
-echo "Command:"
-printf ' %q' "${cmd[@]}"; echo
-
-if [[ $DRY_RUN -eq 1 ]]; then
-  echo "[DRY RUN] Not executing."
-  exit 0
-fi
-
-# Execute
-"${cmd[@]}"
+exit 0
