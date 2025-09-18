@@ -1,3 +1,64 @@
+# Parse options from JSON config (except tid, t1s, tpids, py, sd)
+parse_json_options() {
+	jq -r 'to_entries[] | select(.key != "tid" and .key != "t1s" and .key != "tpids" and .key != "py" and .key != "sd" and .value != null and .value != false and .value != "") | "--" + .key + (if (.value|type) == "boolean" then "" else " " + (.value|tostring) end)' "$1"
+}
+
+# Get SIF file and license from config
+SIF_FILE=$(jq -r .sif_file "$CONFIG")
+LICENSE_PATH=$(jq -r .fs_license "$CONFIG")
+if [[ ! -f "$SIF_FILE" ]]; then
+	echo "Error: Singularity image file '$SIF_FILE' does not exist."; exit 1
+fi
+if [[ ! -f "$LICENSE_PATH" ]]; then
+	echo "Error: FreeSurfer license file '$LICENSE_PATH' does not exist."; exit 1
+fi
+LICENSE_DIR=$(dirname "$LICENSE_PATH")
+
+# Build extra options from config
+EXTRA_OPTS=$(parse_json_options "$CONFIG")
+
+# Build command
+cmd=(singularity exec --nv \
+	--no-home \
+	-B "$BIDS_DATA":/data \
+	-B "$OUTPUT_DIR":/output \
+	-B "$LICENSE_DIR":/fs_license \
+	"$SIF_FILE" \
+	/fastsurfer/long_fastsurfer.sh \
+	--tid "$TID" \
+	--tpids "${TPIDS[@]}" \
+	--t1s "${T1S_PATHS[@]}" \
+	--sd /output \
+	--fs_license /fs_license/license.txt)
+
+# Add python and parallelization options if set
+if [[ -n "$PYTHON" ]]; then
+	cmd+=(--py "$PYTHON")
+fi
+if [[ -n "$PARALLEL" ]]; then
+	cmd+=(--parallel "$PARALLEL")
+fi
+if [[ -n "$PARALLEL_SEG" ]]; then
+	cmd+=(--parallel_seg "$PARALLEL_SEG")
+fi
+if [[ -n "$PARALLEL_SURF" ]]; then
+	cmd+=(--parallel_surf "$PARALLEL_SURF")
+fi
+
+# Add extra options from config
+if [[ -n "$EXTRA_OPTS" ]]; then
+	# shellcheck disable=SC2206
+	extra_opts_arr=($EXTRA_OPTS)
+	cmd+=("${extra_opts_arr[@]}")
+fi
+
+echo "Processing longitudinal pipeline for $TID with timepoints: ${TPIDS[*]}"
+if [[ $DRY_RUN -eq 1 ]]; then
+	printf '%q ' "${cmd[@]}"
+	echo
+else
+	"${cmd[@]}"
+fi
 #!/bin/bash
 
 # Usage: ./bids_long_fastsurfer.sh /bids-folder /outputfolder -c long_fastsurfer_options.json --tid <templateID> --tpids <tpID1> <tpID2> ... --t1s <T1_1> <T1_2> ... [OPTIONS]
