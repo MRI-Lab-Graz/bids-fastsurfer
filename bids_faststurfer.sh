@@ -10,43 +10,58 @@
 #   -c <config.json>       Path to JSON config file with FastSurfer options
 #   --dry_run              (Optional) Print the Singularity command instead of running it
 #   --pilot                (Optional) Randomly pick only one subject for testing
+#   --sub <subject>        (Optional) Process only the specified subject (e.g. sub-001)
+#   --ses <session>        (Optional) Process only the specified session for the subject (e.g. ses-1)
 #   --debug                (Optional) Print debug information about parsed options and paths
 #
 # Example:
 #   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --pilot --dry_run --debug
-
-# Show help if no arguments are provided
-if [[ $# -eq 0 ]]; then
-    echo "\nUsage: $0 <bids_data_dir> <output_dir> -c <config.json> [--dry_run] [--pilot] [--debug]"
-    echo "\nArguments:"
-    echo "  <bids_data_dir>   Path to BIDS input directory"
-    echo "  <output_dir>      Path to output directory"
-    echo "  -c <config.json>  Path to JSON config file with FastSurfer options"
-    echo "  --dry_run         (Optional) Print the Singularity command instead of running it"
-    echo "  --pilot           (Optional) Randomly pick only one subject for testing"
-    echo "  --debug           (Optional) Print debug information about parsed options and paths"
     echo "\nExample:"
     echo "  $0 ./data ./output -c fastsurfer_options.json --pilot --dry_run --debug"
-    exit 0
-fi
+    echo "  $0 ./data ./output -c fastsurfer_options.json --sub sub-001 --ses ses-1"
 
-set -e
-
-if ! command -v jq &> /dev/null; then
-    echo "Error: jq is required but not installed. Please install jq."
-    exit 1
-fi
-
-BIDS_DATA="$1"
-OUTPUT_DIR="$2"
-shift 2
-
-
-CONFIG=""
-
-
-DRY_RUN=0
-PILOT=0
+# Show help if no arguments are provided
+SUBJECT=""
+SESSION=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -c|--config)
+            CONFIG="$2"
+            shift 2
+            ;;
+        --dry_run)
+            DRY_RUN=1
+            shift
+            ;;
+        --pilot)
+            PILOT=1
+            shift
+            ;;
+        --debug)
+            DEBUG=1
+            shift
+            ;;
+        --sub)
+            SUBJECT="$2"
+            shift 2
+            ;;
+        --ses)
+            SESSION="$2"
+            shift 2
+            ;;
+        *)
+            if [[ -z "$BIDS_DATA" ]]; then
+                BIDS_DATA="$1"
+            elif [[ -z "$OUTPUT_DIR" ]]; then
+                OUTPUT_DIR="$1"
+            else
+                echo "Unknown argument: $1"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
 DEBUG=0
 
 
@@ -111,7 +126,41 @@ parse_json_options() {
     jq -r 'to_entries[] | select(.key != "fs_license" and .key != "sif_file" and .value != null and .value != false and .value != "") | "--" + .key + (if (.value|type) == "boolean" then "" else " " + (.value|tostring) end)' "$1"
 }
 
-T1W_LIST=( $(find "$BIDS_DATA" -type f \( -name "*_T1w.nii" -o -name "*_T1w.nii.gz" -o -name "*_desc-preproc_T1w.nii.gz" \)) )
+
+# Build T1w list based on --sub/--ses or all
+if [[ -n "$SUBJECT" ]]; then
+    # Check subject exists
+    if [[ ! -d "$BIDS_DATA/$SUBJECT" ]]; then
+        echo "Error: Subject $SUBJECT not found in $BIDS_DATA."
+        exit 1
+    fi
+    if [[ -n "$SESSION" ]]; then
+        # Check session exists
+        if [[ ! -d "$BIDS_DATA/$SUBJECT/$SESSION" ]]; then
+            echo "Error: Session $SESSION not found for $SUBJECT in $BIDS_DATA."
+            exit 1
+        fi
+        T1W_LIST=( $(find "$BIDS_DATA/$SUBJECT/$SESSION" -type f \( -name "*_T1w.nii" -o -name "*_T1w.nii.gz" -o -name "*_desc-preproc_T1w.nii.gz" \)) )
+    else
+        T1W_LIST=( $(find "$BIDS_DATA/$SUBJECT" -type f \( -name "*_T1w.nii" -o -name "*_T1w.nii.gz" -o -name "*_desc-preproc_T1w.nii.gz" \)) )
+    fi
+elif [[ -n "$SESSION" ]]; then
+    # No subject, but session specified: process all subjects with this session
+    mapfile -t SUBJECTS < <(find "$BIDS_DATA" -maxdepth 1 -type d -name 'sub-*' -exec basename {} \;)
+    T1W_LIST=()
+    for subj in "${SUBJECTS[@]}"; do
+        if [[ -d "$BIDS_DATA/$subj/$SESSION" ]]; then
+            t1s=( $(find "$BIDS_DATA/$subj/$SESSION" -type f \( -name "*_T1w.nii" -o -name "*_T1w.nii.gz" -o -name "*_desc-preproc_T1w.nii.gz" \)) )
+            T1W_LIST+=("${t1s[@]}")
+        fi
+    done
+    if [[ ${#T1W_LIST[@]} -eq 0 ]]; then
+        echo "Error: No T1w images found for session $SESSION in $BIDS_DATA."
+        exit 1
+    fi
+else
+    T1W_LIST=( $(find "$BIDS_DATA" -type f \( -name "*_T1w.nii" -o -name "*_T1w.nii.gz" -o -name "*_desc-preproc_T1w.nii.gz" \)) )
+fi
 
 # If --pilot, randomly pick one T1w image
 if [[ $PILOT -eq 1 ]]; then
