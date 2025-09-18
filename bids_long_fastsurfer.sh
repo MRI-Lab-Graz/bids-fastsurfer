@@ -78,6 +78,7 @@ TEMPLATE_SUBJECT=""
 declare -a TPIDS=()
 DRY_RUN=0
 DEBUG=0
+PYTHON_CMD="python3"
 # AUTO default: enabled unless user provides --tid/--tpids
 AUTO=1
 
@@ -111,6 +112,8 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=1; shift ;;
     --debug)
       DEBUG=1; shift ;;
+    --py)
+      PYTHON_CMD="${2:-python3}"; shift 2 ;;
     -h|--help)
       usage; exit 0 ;;
     --*)
@@ -192,6 +195,35 @@ fi
 LICENSE_DIR=$(dirname "${FS_LICENSE}")
 
 ############################################
+# Collect Longitudinal Options (from JSON long section)
+############################################
+VALID_LONG_KEYS=(
+  parallel parallel_seg parallel_surf
+  reg_mode qc_snap surf_only 3T device viewagg_device
+  threads threads_seg threads_surf batch ignore_fs_version
+  fstess fsqsphere fsaparc no_fs_T1 no_surfreg allow_root base
+)
+declare -a LONG_OPTS=()
+for key in "${VALID_LONG_KEYS[@]}"; do
+  raw=$(jq -r --arg k "$key" '.long[$k]' "${CONFIG}" 2>/dev/null || echo "null")
+  [[ "$raw" == "null" || -z "$raw" ]] && continue
+  type=$(jq -r --arg k "$key" 'if (.long[$k]|type) then (.long[$k]|type) else "null" end' "${CONFIG}")
+  if [[ "$type" == "boolean" ]]; then
+    [[ "$raw" == "true" ]] && LONG_OPTS+=("--$key")
+  else
+    LONG_OPTS+=("--$key" "$raw")
+  fi
+done
+if [[ $DEBUG -eq 1 ]]; then
+  mapfile -t present_keys < <(jq -r '.long | keys[]' "${CONFIG}")
+  for k in "${present_keys[@]}"; do
+    if ! printf '%s\n' "${VALID_LONG_KEYS[@]}" | grep -q "^${k}$"; then
+      echo "[DEBUG] Ignoring unknown long option key '$k'"
+    fi
+  done
+fi
+
+############################################
 if [[ $AUTO -eq 0 ]]; then
   # Manual mode processing (single subject)
   declare -a T1_PATHS=()
@@ -223,7 +255,7 @@ if [[ $AUTO -eq 0 ]]; then
     [[ $DEBUG -eq 1 ]] && {
       echo "[DEBUG] TPID=${tpid}"; echo "[DEBUG] Host T1=${t1_candidate}"; echo "[DEBUG] Container T1=${container_t1}"; }
   done
-  cmd=( singularity exec --nv --no-home -B "${BIDS_ROOT%/}":/data -B "${OUTPUT_DIR%/}":/output -B "${LICENSE_DIR}":/fs_license "${SIF_FILE}" /fastsurfer/long_fastsurfer.sh --tid "${TEMPLATE_SUBJECT}" --t1s "${T1_PATHS[@]}" --tpids "${TPIDS[@]}" --sd /output --fs_license /fs_license/license.txt )
+  cmd=( singularity exec --nv --no-home -B "${BIDS_ROOT%/}":/data -B "${OUTPUT_DIR%/}":/output -B "${LICENSE_DIR}":/fs_license "${SIF_FILE}" /fastsurfer/long_fastsurfer.sh --tid "${TEMPLATE_SUBJECT}" --t1s "${T1_PATHS[@]}" --tpids "${TPIDS[@]}" --sd /output --fs_license /fs_license/license.txt --py "${PYTHON_CMD}" )
   if [[ ${#LONG_OPTS[@]} -gt 0 ]]; then cmd+=( "${LONG_OPTS[@]}" ); fi
   if [[ $DEBUG -eq 1 ]]; then
     echo "[DEBUG] TEMPLATE_SUBJECT: ${TEMPLATE_SUBJECT}"; echo "[DEBUG] TPIDS: ${TPIDS[*]}"; echo "[DEBUG] T1_PATHS (container): ${T1_PATHS[*]}"; echo "[DEBUG] LONG_OPTS: ${LONG_OPTS[*]}"; echo "[DEBUG] Singularity image: ${SIF_FILE}"; echo "[DEBUG] License: ${FS_LICENSE}"; fi
@@ -275,7 +307,7 @@ else
       continue
     fi
     # Build command per subject
-    cmd=( singularity exec --nv --no-home -B "${BIDS_ROOT%/}":/data -B "${OUTPUT_DIR%/}":/output -B "${LICENSE_DIR}":/fs_license "${SIF_FILE}" /fastsurfer/long_fastsurfer.sh --tid "$subj" --t1s "${T1_PATHS_LOCAL[@]}" --tpids "${TPIDS_LOCAL[@]}" --sd /output --fs_license /fs_license/license.txt )
+  cmd=( singularity exec --nv --no-home -B "${BIDS_ROOT%/}":/data -B "${OUTPUT_DIR%/}":/output -B "${LICENSE_DIR}":/fs_license "${SIF_FILE}" /fastsurfer/long_fastsurfer.sh --tid "$subj" --t1s "${T1_PATHS_LOCAL[@]}" --tpids "${TPIDS_LOCAL[@]}" --sd /output --fs_license /fs_license/license.txt --py "${PYTHON_CMD}" )
     if [[ ${#LONG_OPTS[@]} -gt 0 ]]; then cmd+=( "${LONG_OPTS[@]}" ); fi
     echo "[AUTO] Subject $subj with ${#TPIDS_LOCAL[@]} sessions -> TPIDs: ${TPIDS_LOCAL[*]}"
     printf '  CMD:'; printf ' %q' "${cmd[@]}"; echo
