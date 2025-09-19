@@ -29,16 +29,55 @@ jq --version
 - `bids_faststurfer.sh` — Cross-sectional wrapper
 - `bids_long_fastsurfer.sh` — Longitudinal wrapper
 - `fastsurfer_options.json` — Example configuration file with cross/long sections
-- `data/` — Example images from the workshop (not a full BIDS tree)
 - `license.txt` — Placeholder filename referenced by scripts (replace with your actual FreeSurfer license file path in the config)
 
-## Example BIDS dataset
+## Example BIDS datasets
 
-If you need a public BIDS dataset to try the wrappers, you can use this OpenNeuro example:
+If you need public BIDS datasets to try the wrappers, you can use these OpenNeuro examples (or any other BIDS-compatible dataset):
 
-- OpenNeuro ds004937 v1.0.1: https://openneuro.org/datasets/ds004937/versions/1.0.1
+- Longitudinal: ds004937 v1.0.1 — https://openneuro.org/datasets/ds004937/versions/1.0.1
+- Cross-sectional: ds004965 v1.0.1 — https://openneuro.org/datasets/ds004965/versions/1.0.1
 
-Download using your preferred tool (OpenNeuro CLI, DataLad, or web download) and point `<BIDS_ROOT>` to the dataset root.
+Download using your preferred tool (OpenNeuro CLI, openneuro-py, DataLad, or web download) and point `<BIDS_ROOT>` to the dataset root.
+
+### Download examples
+
+You can download these datasets with either the OpenNeuro CLI or the Python package `openneuro-py`.
+
+- OpenNeuro CLI (requires Node.js):
+
+```zsh
+# Install once (optional)
+npm install -g @openneuro/cli
+
+# Longitudinal dataset (ds004937 v1.0.1)
+openneuro download --snapshot 1.0.1 --dataset ds004937 --destination /path/to/BIDS-ds004937
+
+# Cross-sectional dataset (ds004965 v1.0.1)
+openneuro download --snapshot 1.0.1 --dataset ds004965 --destination /path/to/BIDS-ds004965
+```
+
+- Python: openneuro-py (https://pypi.org/project/openneuro-py/)
+
+```zsh
+# Create/activate a virtual environment (optional)
+python3 -m venv ~/.venvs/openneuro && source ~/.venvs/openneuro/bin/activate
+pip install --upgrade pip openneuro-py
+
+# Download longitudinal dataset ds004937 v1.0.1
+python - <<'PY'
+from openneuro import download
+download(dataset='ds004937', target_dir='/path/to/BIDS-ds004937', include='*', tag='1.0.1')
+PY
+
+# Download cross-sectional dataset ds004965 v1.0.1
+python - <<'PY'
+from openneuro import download
+download(dataset='ds004965', target_dir='/path/to/BIDS-ds004965', include='*', tag='1.0.1')
+PY
+```
+
+After downloading, use the dataset root directories (`/path/to/BIDS-ds004937` or `/path/to/BIDS-ds004965`) as `<BIDS_ROOT>` in the examples below.
 
 ## Configuration: `fastsurfer_options.json`
 
@@ -153,13 +192,8 @@ bash bids_faststurfer.sh <BIDS_ROOT> <OUTPUT_DIR> -c <config.json> [--sub <sub-X
 What it does:
 - Scans for T1w images (`*_T1w.nii.gz`, `*_T1w.nii`, or `*_desc-preproc_T1w.nii.gz`) respecting `--sub/--ses` limits if provided.
 - Optionally attempts to find a matching T2w (`*_T2w.nii.gz`) per T1w and adds `--t2` if found.
-- Builds Singularity commands and runs `/fastsurfer/run_fastsurfer.sh` with:
-	- `--t1 /data/<relative-path-inside-BIDS>`
-	- `--sid <subject[_session]>`
-	- `--sd /output` and `--fs_license /fs_license/license.txt`
-	- `--3T` (if set in config)
-	- Extra options from the `cross` section in the config
-- Binds: `BIDS_ROOT → /data`, `OUTPUT_DIR → /output`, `dirname(fs_license) → /fs_license`
+- Builds and executes the FastSurfer cross-sectional pipeline with the appropriate `--t1`, `--sid`, and other options derived from your BIDS dataset and config.
+- The wrapper takes care of container bindings internally; you only provide host paths for `<BIDS_ROOT>` and `<OUTPUT_DIR>`.
 
 Examples:
 
@@ -182,8 +216,7 @@ bash bids_faststurfer.sh /path/to/BIDS /path/to/derivatives/fastsurfer \
 ```
 
 Notes:
-- The script computes the T1w container path relative to `/data`. If you see issues with `--t2`, ensure the T2 path is correctly mapped inside `/data` as well.
-- The sample `data/` in this repo is flat and for demo only; a real BIDS tree is recommended (e.g., `sub-XXX/ses-YYY/anat/`).
+- Use a proper BIDS tree (e.g., `sub-XXX/ses-YYY/anat/`). The OpenNeuro examples above are already BIDS-compliant.
 
 ## Longitudinal wrapper: `bids_long_fastsurfer.sh`
 
@@ -213,12 +246,7 @@ bash bids_long_fastsurfer.sh <BIDS_ROOT> <OUTPUT_DIR> -c <config.json> \
 - `--py` lets you choose the Python executable inside the container (default: `python3`).
 
 What it does:
-- Builds Singularity commands and runs `/fastsurfer/long_fastsurfer.sh` with:
-	- `--tid`, `--t1s <container T1 paths>`, `--tpids <timepoint IDs>`
-	- `--sd /output` and `--fs_license /fs_license/license.txt`
-	- Optional `--py <python>`
-	- Extra options from the `long` section in the config (e.g., parallelization)
-- Binds: `BIDS_ROOT → /data`, `OUTPUT_DIR → /output`, `dirname(fs_license) → /fs_license`
+- Builds and executes the FastSurfer longitudinal pipeline with the appropriate `--tid`, `--t1s`, `--tpids`, and options based on your dataset and config. The wrapper handles container bindings internally.
 
 Examples:
 
@@ -237,13 +265,13 @@ bash bids_long_fastsurfer.sh /path/to/BIDS /path/to/derivatives/fastsurfer_long 
 	--tpids sub-001_ses-01 sub-001_ses-02 --dry_run --debug
 ```
 
-Notes:
+ Notes:
 - `--pilot` is only valid in auto mode.
 - Unknown keys in the `long` section are ignored, with warnings printed in `--debug` mode.
 
 ## Outputs
 
-- All outputs go to `<OUTPUT_DIR>`, mounted as `/output` inside the container.
+- All outputs go to `<OUTPUT_DIR>`.
 - Cross-sectional runs create one FreeSurfer subject directory per input (named by `--sid`).
 - Longitudinal runs create base and TP directories under the same `<OUTPUT_DIR>` according to FastSurfer’s conventions.
 
