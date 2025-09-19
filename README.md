@@ -1,4 +1,4 @@
-# FastSurfer BIDS Wrappers (Workshop 2025)
+# FastSurfer BIDS Wrappers
 
 This repository contains two Bash wrappers to run the FastSurfer cross-sectional and longitudinal pipelines on BIDS datasets via Singularity containers. They add BIDS-aware discovery, JSON-based configuration, and quality-of-life flags like dry-run, debug, and pilot sampling.
 
