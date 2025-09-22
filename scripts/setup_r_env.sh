@@ -11,8 +11,9 @@ set -euo pipefail
 # Behavior:
 # - If renv is not installed system-wide, installs it to user library.
 # - If renv project not initialized, runs renv::init(); otherwise renv::activate() and renv::restore() if lockfile exists.
-# - Installs CRAN packages: optparse, jsonlite, remotes
-# - Installs fslmer from GitHub via remotes: Deep-MI/fslmer
+# - Installs CRAN packages using pak (preferred) or remotes fallback
+#   - CRAN: optparse, jsonlite
+#   - GitHub: Deep-MI/fslmer
 # - Snapshots renv.lock (unless --no-snapshot)
 # - Verifies Rscript availability and prints package versions; runs a lightweight self-check of scripts/fslmer_univariate.R
 #
@@ -23,6 +24,7 @@ set -euo pipefail
 QUIET=0
 SNAPSHOT=1
 CRAN_MIRROR="https://cloud.r-project.org"
+LOG_FILE="setup_r_env.log"
 
 die() { echo "[setup_r_env] $*" >&2; exit 1; }
 log() { if [[ $QUIET -eq 0 ]]; then echo "[setup_r_env] $*"; fi }
@@ -54,17 +56,41 @@ else
 fi
 
 # Install CRAN deps
-log "Installing CRAN packages: optparse, jsonlite, remotes"
-Rscript -e "install.packages(c('optparse','jsonlite','remotes'), repos='${CRAN_MIRROR}')" >/dev/null
+log "Installing packages with pak (preferred)"
+# Try pak first (fast resolver, binary packages when available)
+set +e
+Rscript -e "if (!requireNamespace('pak', quietly=TRUE)) install.packages('pak', repos='https://r-lib.github.io/p/pak/stable'); pak::pkg_install(c('optparse','jsonlite'), upgrade = FALSE)" >>"${LOG_FILE}" 2>&1
+PAK_RC=$?
+set -e
+if [[ $PAK_RC -ne 0 ]]; then
+  log "pak failed; falling back to install.packages for CRAN deps"
+  Rscript -e "install.packages(c('optparse','jsonlite'), repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
+fi
 
 # Install fslmer
-log "Installing fslmer from GitHub (Deep-MI/fslmer) via remotes (no build/vignettes)"
-Rscript -e "remotes::install_github('Deep-MI/fslmer', build=FALSE, build_vignettes=FALSE, dependencies=TRUE, upgrade='never', quiet=TRUE)" >/dev/null || die "Failed to install fslmer"
+log "Installing fslmer (Deep-MI/fslmer) via pak (preferred)"
+# Allow pinning a specific ref via env var FSLMER_REF (tag/branch/commit). Example: export FSLMER_REF=v0.2.0
+FSLMER_REF_ARG=""
+if [[ -n "${FSLMER_REF:-}" ]]; then FSLMER_REF_ARG=", ref='${FSLMER_REF}'"; fi
+
+set +e
+Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install(sprintf('Deep-MI/fslmer%s', if (nzchar(Sys.getenv('FSLMER_REF'))) paste0('@', Sys.getenv('FSLMER_REF')) else ''), upgrade = FALSE) else quit(status=99)" >>"${LOG_FILE}" 2>&1
+PAK_FSL_RC=$?
+set -e
+if [[ $PAK_FSL_RC -ne 0 && $PAK_FSL_RC -ne 99 ]]; then
+  log "pak install of fslmer failed (exit $PAK_FSL_RC); will try remotes fallback"
+fi
+if [[ $PAK_FSL_RC -eq 99 || $PAK_FSL_RC -ne 0 ]]; then
+  log "Installing fslmer via remotes fallback (no build/vignettes)"
+  export R_REMOTES_NO_ERRORS_FROM_WARNINGS=true
+  Rscript -e "remotes::install_github('Deep-MI/fslmer'${FSLMER_REF_ARG}, build=FALSE, build_vignettes=FALSE, dependencies=c('Depends','Imports','LinkingTo'), upgrade='never', quiet=TRUE)" >>"${LOG_FILE}" 2>&1 || {
+    log "fslmer install failed. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Failed to install fslmer"; }
+fi
 
 # Snapshot
 if [[ $SNAPSHOT -eq 1 ]]; then
   log "Snapshotting renv state"
-  Rscript -e "renv::snapshot(prompt=FALSE)" >/dev/null
+  Rscript -e "renv::snapshot(prompt=FALSE)" >>"${LOG_FILE}" 2>&1
 fi
 
 # Verify loaded packages and versions
@@ -86,3 +112,4 @@ if [[ -f scripts/fslmer_univariate.R ]]; then
 fi
 
 log "R environment setup complete."
+log "Install log saved to ${LOG_FILE}"
