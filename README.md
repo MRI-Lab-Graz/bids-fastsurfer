@@ -296,6 +296,38 @@ bash bids_long_fastsurfer.sh /path/to/BIDS /path/to/derivatives/fastsurfer_long 
 - Use `--pilot` to quickly validate the environment on a small subset before scaling up.
 - Keep your config minimal and explicit; remove unused keys to reduce ambiguity.
 
+## Longitudinal statistics: generate Qdec
+
+To run FreeSurfer-style longitudinal statistics (e.g., with the R package fslmer), generate a Qdec file from your BIDS `participants.tsv` and your FastSurfer/FreeSurfer subjects directory.
+
+Script: `scripts/generate_qdec.py`
+
+Inputs:
+- `--participants`: Path to `participants.tsv` with at least `participant_id` and optionally `session_id`, plus covariates (`age`, `sex`, `group`, ...).
+- `--subjects-dir`: Path to the FastSurfer/FreeSurfer subjects directory. Expect directories like `sub-1291003` (base) and `sub-1291003_ses-1` (timepoint).
+- `--output`: Output path for the Qdec TSV (default: `qdec.table.dat`).
+- `--include-columns`: Optional explicit list of covariates to include from `participants.tsv`. If omitted, all columns except participant/session are included.
+- `--strict`: If set, the script fails when a timepoint has no matching participants row; otherwise fills `n/a`.
+
+Output columns:
+- `fsid` — timepoint subject id (e.g., `sub-1291003_ses-1`)
+- `fsid-base` — base/template id (e.g., `sub-1291003`)
+- `tp` — numeric timepoint derived from `ses-<number>` (or `n/a` if not parseable)
+- Covariates — selected from `participants.tsv`
+
+Example:
+```zsh
+python scripts/generate_qdec.py \
+	--participants /path/to/BIDS/participants.tsv \
+	--subjects-dir /path/to/derivatives/fastsurfer_long \
+	--output /path/to/qdec.table.dat \
+	--include-columns age sex group
+```
+
+Use the resulting `qdec.table.dat` with FreeSurfer longitudinal statistics and tools like `fslmer`:
+- FreeSurfer Longitudinal: https://surfer.nmr.mgh.harvard.edu/fswiki/LongitudinalStatistics
+- fslmer: https://github.com/Deep-MI/fslmer
+
 ## Credits and License
 
 - FastSurfer is developed by the FastSurfer team; see their documentation for details and licensing.
