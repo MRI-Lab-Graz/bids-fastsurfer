@@ -74,6 +74,13 @@ BETTERMC_LOCAL="${BETTERMC_TARBALL:-}"
 if [[ -z "$BETTERMC_LOCAL" && -f "vendor/bettermc_${BETTERMC_VERSION}.tar.gz" ]]; then
   BETTERMC_LOCAL="vendor/bettermc_${BETTERMC_VERSION}.tar.gz"
 fi
+# If a tarball exists in vendor/ with a different name/extension, pick the first match
+if [[ -z "$BETTERMC_LOCAL" ]]; then
+  FIRST_MATCH=$(ls vendor/bettermc*.tar* 2>/dev/null | head -n 1 || true)
+  if [[ -n "$FIRST_MATCH" ]]; then
+    BETTERMC_LOCAL="$FIRST_MATCH"
+  fi
+fi
 set +e
 # Prefer local tarball if provided (no network needed)
 if [[ -n "$BETTERMC_LOCAL" && -f "$BETTERMC_LOCAL" ]]; then
