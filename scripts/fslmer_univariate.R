@@ -2,7 +2,15 @@
 
 suppressPackageStartupMessages({
   library(optparse)
-  library(fslmer)
+  library(fif (isTRUE(opt$`print-cols`)) {
+  cat("qdec columns:\n"); print(names(qdec))
+  cat("aseg/aparc columns:\n"); print(names(aseg))
+  cat("\nFirst few rows of qdec:\n"); print(head(qdec))
+  cat("\nFirst few rows of aseg:\n"); print(head(aseg))
+  cat(sprintf("\nqdec dimensions: %d rows x %d cols\n", nrow(qdec), ncol(qdec)))
+  cat(sprintf("aseg dimensions: %d rows x %d cols\n", nrow(aseg), ncol(aseg)))
+  quit(status=0)
+})
   library(jsonlite)
 })
 
@@ -92,22 +100,36 @@ if (isTRUE(opt$print_cols)) {
   quit(status=0)
 }
 
-# Standardize to 'fsid_base' with an underscore for safety
+# Standardize qdec ID column to 'fsid_base' with an underscore for safety
 if ("fsid-base" %in% names(qdec)) {
   names(qdec)[names(qdec) == "fsid-base"] <- "fsid_base"
 } else if ("fsid.base" %in% names(qdec)) {
   names(qdec)[names(qdec) == "fsid.base"] <- "fsid_base"
 }
 
-# The script creates 'fsid.base', so we just rename it
-names(aseg)[names(aseg) == "fsid.base"] <- "fsid_base"
-
-# Debug: Check if fsid_base exists in both data frames
-if (!("fsid_base" %in% names(qdec))) {
-  stop(sprintf("fsid_base not found in qdec columns: %s", paste(names(qdec), collapse=", ")))
+# Derive ID columns from aseg: usually the first column is "Measure:volume" (read as "Measure.volume")
+id_candidates <- c(opt$id_col, "Measure.volume", "Measure:volume")
+id_col <- id_candidates[id_candidates %in% names(aseg)][1]
+if (is.na(id_col) || is.null(id_col)) {
+  stop(sprintf("Could not find ID column in aseg. Tried: %s. Available columns: %s",
+               paste(unique(id_candidates), collapse=", "), paste(names(aseg), collapse=", ")))
 }
-if (!("fsid_base" %in% names(aseg))) {
-  stop(sprintf("fsid_base not found in aseg columns: %s", paste(names(aseg), collapse=", ")))
+
+# Parse IDs of the form '<fsid>.long.<fsid_base>' into two columns on aseg
+id_vals <- as.character(aseg[[id_col]])
+has_long <- grepl("\\.long\\.", id_vals, perl=TRUE)
+aseg$fsid <- ifelse(has_long, sub("^(.*)\\.long\\..*$", "\\1", id_vals, perl=TRUE), id_vals)
+aseg$fsid_base <- ifelse(has_long, sub("^.*\\.long\\.(.*)$", "\\1", id_vals, perl=TRUE), NA_character_)
+
+# Debug: Check if keys exist in both data frames
+if (!("fsid" %in% names(qdec))) {
+  stop(sprintf("qdec is missing 'fsid' column. Columns are: %s", paste(names(qdec), collapse=", ")))
+}
+if (!("fsid_base" %in% names(qdec))) {
+  stop(sprintf("qdec is missing 'fsid_base' column (after standardization). Columns are: %s", paste(names(qdec), collapse=", ")))
+}
+if (!all(c("fsid","fsid_base") %in% names(aseg))) {
+  stop(sprintf("aseg is missing derived 'fsid'/'fsid_base' columns. Columns are: %s", paste(names(aseg), collapse=", ")))
 }
 
 # Set default time column if not specified
@@ -121,8 +143,8 @@ if (is.null(opt$time_col)) {
   time_col <- opt$time_col
 }
 
-# Merge using the safe column name
-dat <- merge(qdec, aseg, by="fsid_base")
+# Merge using both keys to avoid ambiguity
+dat <- merge(qdec, aseg, by=c("fsid", "fsid_base"))
 
 if (nrow(dat) == 0) stop("Merged data is empty; check IDs and inputs")
 
