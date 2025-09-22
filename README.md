@@ -415,6 +415,22 @@ R environment with renv:
   - Snapshot: `renv::snapshot()`
 - On another machine (or later), restore with: `renv::restore()`
 
+Quick setup script (install/activate/verify):
+
+- You can bootstrap the R environment from the repo root with:
+
+```zsh
+bash scripts/setup_r_env.sh
+```
+
+- What it does:
+  - Ensures Rscript and renv are available
+  - Initializes or activates the renv project and restores if a lockfile exists
+  - Installs CRAN packages: optparse, jsonlite, devtools
+  - Installs fslmer from GitHub: Deep-MI/fslmer
+  - Snapshots renv.lock and prints a brief verification
+  - Flags: `--no-snapshot`, `--cran-mirror <url>`, `--quiet`
+
 ### Using FreeSurfer tools with FastSurfer longitudinal outputs
 
 Some FreeSurfer utilities (e.g., `asegstats2table --qdec-long`) expect timepoints to be arranged as `<fsid>.long.<fsid-base>/stats/aseg.stats`. FastSurfer’s longitudinal pipeline may not create these `.long.*` directories by default.
