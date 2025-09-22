@@ -84,15 +84,6 @@ if (is.null(id_col)) {
 aseg$fsid      <- sub("\\.long\\..*", "",  aseg[[id_col]])
 aseg$fsid.base <- sub(".*\\.long\\.",  "", aseg[[id_col]])
 
-# Debug: Show extracted IDs
-cat("DEBUG: First few aseg IDs after extraction:\n")
-cat("Original aseg ID column (", id_col, "):\n")
-print(head(aseg[[id_col]], 3))
-cat("Extracted fsid:\n")
-print(head(aseg$fsid, 3))
-cat("Extracted fsid.base:\n")
-print(head(aseg$fsid.base, 3))
-
 # Ensure time column
 time_col <- opt$time_col
 if (is.null(time_col)) {
@@ -102,15 +93,6 @@ if (is.null(time_col)) {
 }
 if (!(time_col %in% names(qdec))) stop(sprintf("Time column '%s' not found in qdec", time_col))
 
-# Debug: Show qdec IDs
-cat("DEBUG: First few qdec IDs:\n")
-cat("qdec fsid:\n")
-print(head(qdec$fsid, 3))
-if ("fsid-base" %in% names(qdec)) {
-  cat("qdec fsid-base:\n")
-  print(head(qdec$`fsid-base`, 3))
-}
-
 # Handle different naming conventions for base ID column
 base_id_col <- "fsid.base"
 if ("fsid-base" %in% names(qdec) && !("fsid.base" %in% names(qdec))) {
@@ -118,11 +100,8 @@ if ("fsid-base" %in% names(qdec) && !("fsid.base" %in% names(qdec))) {
   names(aseg)[names(aseg) == "fsid.base"] <- "fsid-base"
 }
 
-cat("DEBUG: Using base_id_col:", base_id_col, "\n")
-
 # Merge
 dat <- merge(qdec, aseg, by=c(base_id_col, "fsid"))
-cat("DEBUG: Merged data rows:", nrow(dat), "\n")
 if (nrow(dat) == 0) stop("Merged data is empty; check IDs and inputs")
 
 # Order by subject then time
