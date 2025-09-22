@@ -31,6 +31,7 @@ option_list <- list(
   make_option(c("--include-summary"), action="store_true", default=FALSE, help="Include global/summary volume measures in multi-region analysis"),
   make_option(c("--engine"), type="character", default="fslmer", help="Model engine: 'fslmer' (default), 'glm', or 'gam'"),
   make_option(c("--family"), type="character", default="gaussian", help="GLM/GAM family (gaussian, binomial, poisson, Gamma, etc.) [ignored for fslmer]"),
+  make_option(c("--gam-k"), type="integer", default=NA, help="Basis dimension k for s(time) in GAM [default auto: min(5, unique time levels); must be >=2]"),
   make_option(c("--no-gam-re"), action="store_true", default=FALSE, help="Disable random intercept s(fsid_base, bs='re') in GAM"),
   make_option(c("--debug"), action="store_true", default=FALSE, help="Print detailed optimizer logs from fslmer")
 )
@@ -184,10 +185,31 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
       fam <- tryCatch(get(opt$family, mode="function"), error=function(e) NULL)
       if (is.null(fam)) fam <- gaussian
       fam <- fam()
-      base_form <- paste0("y ~ s(", time_col, ", k=5)")
+      # Choose k adaptively unless user specified --gam-k
+      uniq_t <- length(unique(dat[[time_col]]))
+      k_user <- if (!is.na(opt$`gam-k`)) as.integer(opt$`gam-k`) else NA_integer_
+      k_time <- if (!is.na(k_user)) k_user else max(2L, min(5L, uniq_t))
+      if (!isTRUE(opt$quiet) && isTRUE(opt$debug)) cat(sprintf("[GAM] Using k=%d for s(%s) with %d unique values\n", k_time, time_col, uniq_t))
+      base_form <- paste0("y ~ s(", time_col, ", k=", k_time, ")")
       if (!isTRUE(opt$`no-gam-re`)) base_form <- paste0(base_form, "+ s(fsid_base, bs='re')")
       gform <- as.formula(base_form)
-      function() mgcv::gam(gform, data=dat, family=fam, method="REML")
+      function() {
+        # Try with chosen k; if the common mgcv error about unique covariate combinations occurs, reduce k and retry
+        fit <- try(mgcv::gam(gform, data=dat, family=fam, method="REML"), silent=TRUE)
+        if (inherits(fit, "try-error")) {
+          msg_txt <- as.character(fit)
+          if (grepl("fewer unique covariate combinations", msg_txt, fixed=TRUE)) {
+            k_fallback <- max(2L, min(k_time, uniq_t))
+            if (k_fallback < k_time) {
+              gform_fb <- as.formula(paste0("y ~ s(", time_col, ", k=", k_fallback, ")", if (!isTRUE(opt$`no-gam-re`)) "+ s(fsid_base, bs='re')" else ""))
+              if (!isTRUE(opt$quiet) && isTRUE(opt$debug)) cat(sprintf("[GAM] Retrying with k=%d due to limited unique values\n", k_fallback))
+              return(mgcv::gam(gform_fb, data=dat, family=fam, method="REML"))
+            }
+          }
+          stop(attr(fit, "condition")$message)
+        }
+        fit
+      }
     },
     {
       return(list(error=sprintf("Unknown --engine '%s' (use fslmer|glm|gam)", opt$engine)))
