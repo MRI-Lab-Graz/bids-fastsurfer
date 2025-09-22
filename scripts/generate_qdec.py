@@ -57,6 +57,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--inspect", action="store_true", help="Print participants.tsv columns and exit")
     p.add_argument("--bids", type=Path, default=None, help="Optional BIDS root to cross-check subjects/sessions consistency")
     p.add_argument("--list-limit", type=int, default=20, help="Max number of IDs to show when listing missing subjects (default: 20)")
+    # FastSurfer compatibility with FreeSurfer .long directories
+    p.add_argument("--verify-long", action="store_true", help="Verify presence of <fsid>.long.<base>/stats/aseg.stats for each timepoint")
+    p.add_argument("--link-long", action="store_true", help="Create <fsid>.long.<base> symlinks pointing to the timepoint directories when missing")
+    p.add_argument("--link-dry-run", action="store_true", help="Print the symlink actions without making changes")
+    p.add_argument("--link-force", action="store_true", help="If an existing symlink points elsewhere, replace it (does not delete real directories)")
     return p.parse_args(argv)
 
 
@@ -308,6 +313,96 @@ def write_qdec(output_path: Path, header: List[str], rows: List[List[str]]) -> N
             writer.writerow(row)
 
 
+def _ensure_symlink(link_path: Path, target_path: Path, dry_run: bool = True, force: bool = False) -> Tuple[bool, str]:
+    """Ensure link_path is a symlink to target_path.
+
+    Returns (changed, message)
+    - changed True if a new symlink was created or updated.
+    - message contains a short description of the action taken or why it was skipped.
+    """
+    # If link exists and is a symlink
+    if link_path.is_symlink():
+        try:
+            current = link_path.resolve()
+        except FileNotFoundError:
+            current = None
+        if current and current == target_path.resolve():
+            return False, f"exists (correct symlink): {link_path} -> {target_path}"
+        if not force:
+            return False, f"exists (symlink to different target, use --link-force to update): {link_path}"
+        if not dry_run:
+            link_path.unlink()
+            link_path.symlink_to(target_path, target_is_directory=True)
+        return True, f"updated symlink: {link_path} -> {target_path}"
+    # If link path exists but is not a symlink, do not touch
+    if link_path.exists():
+        return False, f"exists (not a symlink, skipping): {link_path}"
+    # Create new
+    if not dry_run:
+        link_path.symlink_to(target_path, target_is_directory=True)
+    return True, f"created symlink: {link_path} -> {target_path}"
+
+
+def verify_and_link_long(
+    subjects_dir: Path,
+    timepoints: List[Tuple[str, str, Optional[str]]],
+    link: bool = False,
+    dry_run: bool = True,
+    force: bool = False,
+) -> None:
+    """Verify presence of .long directories and optionally create symlinks.
+
+    For each timepoint (fsid, base, ses):
+      - expected long dir: <fsid>.long.<base>
+      - if missing, and stats exist in <fsid>/stats/aseg.stats, optionally create a symlink
+        <fsid>.long.<base> -> <fsid>
+
+    Prints a short summary at the end.
+    """
+    created = 0
+    updated = 0
+    skipped = 0
+    missing_stats: List[str] = []
+    present = 0
+
+    for fsid, base, ses in timepoints:
+        tp_dir = subjects_dir / fsid
+        long_dir = subjects_dir / f"{fsid}.long.{base}"
+        stats_path = tp_dir / "stats" / "aseg.stats"
+
+        if long_dir.exists() and long_dir.is_dir():
+            present += 1
+            continue
+
+        # If long_dir is missing, check whether stats file exists in tp_dir
+        if not stats_path.exists():
+            missing_stats.append(fsid)
+            skipped += 1
+            continue
+
+        if link:
+            changed, msg = _ensure_symlink(long_dir, tp_dir, dry_run=dry_run, force=force)
+            if "created" in msg:
+                created += 1
+            elif "updated" in msg:
+                updated += 1
+            else:
+                skipped += 1
+            print(msg)
+        else:
+            print(f"would link: {long_dir} -> {tp_dir} (use --link-long to create){' [MISSING]' if not stats_path.exists() else ''}")
+            skipped += 1
+
+    print("=== Long symlink verification ===")
+    print(f"Existing long dirs: {present}")
+    print(f"Created: {created}, Updated: {updated}, Skipped: {skipped}")
+    if missing_stats:
+        print(f"Timepoints missing stats/aseg.stats in {subjects_dir}: {len(missing_stats)}")
+        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
+        sample = ", ".join(sorted(missing_stats)[:limit])
+        print(sample + (" ..." if len(missing_stats) > limit else ""))
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     # Existence checks
@@ -342,6 +437,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"Wrote Qdec file: {args.output}")
     # Optional consistency summary
     summarize_consistency(args.bids, args.subjects_dir, participants_rows, participant_col, session_col, timepoints)
+    # Optional FastSurfer .long symlink verification/creation for FreeSurfer tools compatibility
+    if args.verify_long or args.link_long:
+        verify_and_link_long(
+            args.subjects_dir,
+            timepoints,
+            link=args.link_long,
+            dry_run=args.link_dry_run,
+            force=args.link_force,
+        )
     return 0
 
 

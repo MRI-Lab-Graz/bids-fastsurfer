@@ -344,6 +344,40 @@ Use the resulting `qdec.table.dat` with FreeSurfer longitudinal statistics and t
 - FreeSurfer Longitudinal: <https://surfer.nmr.mgh.harvard.edu/fswiki/LongitudinalStatistics>
 - fslmer: <https://github.com/Deep-MI/fslmer>
 
+### Using FreeSurfer tools with FastSurfer longitudinal outputs
+
+Some FreeSurfer utilities (e.g., `asegstats2table --qdec-long`) expect timepoints to be arranged as `<fsid>.long.<fsid-base>/stats/aseg.stats`. FastSurfer’s longitudinal pipeline may not create these `.long.*` directories by default.
+
+To make FreeSurfer tools work without re-running with FreeSurfer, this repo provides a safe symlink workflow:
+
+```zsh
+# Preview/verify which links would be needed (no changes)
+python scripts/generate_qdec.py \
+	--participants /path/to/participants.tsv \
+	--subjects-dir /path/to/fastsurfer_subjects \
+	--verify-long --list-limit 10
+
+# Create .long.<base> symlinks that point to each timepoint directory (dry-run)
+python scripts/generate_qdec.py \
+	--participants /path/to/participants.tsv \
+	--subjects-dir /path/to/fastsurfer_subjects \
+	--link-long --link-dry-run
+
+# Actually create/update links (careful):
+python scripts/generate_qdec.py \
+	--participants /path/to/participants.tsv \
+	--subjects-dir /path/to/fastsurfer_subjects \
+	--link-long
+
+# If an existing symlink points elsewhere, allow updating it:
+python scripts/generate_qdec.py \
+	--participants /path/to/participants.tsv \
+	--subjects-dir /path/to/fastsurfer_subjects \
+	--link-long --link-force
+```
+
+After creating the links, `asegstats2table --qdec-long` will be able to find `stats/aseg.stats` under the expected names.
+
 ## Credits and License
 
 - FastSurfer is developed by the FastSurfer team; see their documentation for details and licensing.
