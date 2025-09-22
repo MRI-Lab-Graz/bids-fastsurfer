@@ -67,13 +67,30 @@ if [[ $PAK_RC -ne 0 ]]; then
   Rscript -e "install.packages(c('optparse','jsonlite','remotes'), repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
 
 # Ensure bettermc (dependency of fslmer) is available before installing fslmer
-log "Ensuring 'bettermc' (CRAN) is installed"
+log "Ensuring 'bettermc' is installed (from CRAN archive if needed)"
+BETTERMC_VERSION="1.2.1"
+BETTERMC_URL="https://cran.r-project.org/src/contrib/Archive/bettermc/bettermc_${BETTERMC_VERSION}.tar.gz"
 set +e
-Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('CRAN:bettermc', upgrade = FALSE) else install.packages('bettermc', repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
-BETTERMC_RC=$?
+# Try pak with version pin first
+Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install(sprintf('bettermc@=%s', '${BETTERMC_VERSION}'), upgrade = FALSE) else quit(status=99)" >>"${LOG_FILE}" 2>&1
+RC_PAK_BMC=$?
 set -e
-if [[ $BETTERMC_RC -ne 0 ]]; then
-  log "bettermc installation reported an error; will proceed and let installer try again if needed"
+if [[ $RC_PAK_BMC -eq 99 || $RC_PAK_BMC -ne 0 ]]; then
+  log "pak versioned install failed or pak not available; trying remotes::install_version for bettermc ${BETTERMC_VERSION}"
+  set +e
+  Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_version('bettermc', version='${BETTERMC_VERSION}', repos='https://cran.r-project.org')" >>"${LOG_FILE}" 2>&1
+  RC_REM_VER=$?
+  set -e
+  if [[ $RC_REM_VER -ne 0 ]]; then
+    log "remotes::install_version failed; trying remotes::install_url from CRAN archive"
+    set +e
+    Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_url('${BETTERMC_URL}')" >>"${LOG_FILE}" 2>&1
+    RC_REM_URL=$?
+    set -e
+    if [[ $RC_REM_URL -ne 0 ]]; then
+      log "Failed to install bettermc from all sources. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Failed to install 'bettermc' (required by fslmer). Check network/firewall and try again.";
+    fi
+  fi
 fi
 fi
 
