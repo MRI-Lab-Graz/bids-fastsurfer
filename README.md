@@ -426,10 +426,33 @@ bash scripts/setup_r_env.sh
 - What it does:
   - Ensures Rscript and renv are available
   - Initializes or activates the renv project and restores if a lockfile exists
-  - Installs CRAN packages: optparse, jsonlite, devtools
-  - Installs fslmer from GitHub: Deep-MI/fslmer
-  - Snapshots renv.lock and prints a brief verification
-  - Flags: `--no-snapshot`, `--cran-mirror <url>`, `--quiet`
+	- Installs CRAN packages: optparse, jsonlite (and remotes)
+	- Installs fslmer (prefers GitHub via pak; see offline mode below)
+	- Snapshots renv.lock and prints a brief verification
+	- Flags: `--no-snapshot`, `--cran-mirror <url>`, `--offline`, `--quiet`
+
+Offline installs (no network):
+
+If your server has no internet access, provide local source tarballs and enable offline mode. The script will only use local files and will not attempt any network access.
+
+```zsh
+# Minimal example: install bettermc from a local tarball and set up fslmer from a local tarball
+BETTERMC_TARBALL=/abs/path/to/vendor/bettermc_1.2.1.tar.gz \
+FSLMER_TARBALL=/abs/path/to/vendor/fslmer_0.2.0.tar.gz \
+OFFLINE=1 bash scripts/setup_r_env.sh --offline
+```
+
+Search paths and environment variables for local tarballs:
+
+- renv: set `RENV_TARBALL=/abs/path/to/renv_X.Y.Z.tar.gz` or place under `vendor/`
+- CRAN deps (optparse, jsonlite, remotes): place tarballs under `vendor/` as `optparse_*.tar.gz`, etc.
+- bettermc: set `BETTERMC_TARBALL=/abs/path/to/bettermc_1.2.1.tar.gz` or place under `vendor/`
+- fslmer: set `FSLMER_TARBALL=/abs/path/to/fslmer_*.tar.gz` or place under `vendor/`
+
+Notes:
+
+- In offline mode, `renv::restore()` is skipped; only `renv::activate()` is run. Snapshotting still works.
+- When online, the script prefers `pak` for faster installs and falls back to `install.packages`/`remotes` when needed.
 
 ### Using FreeSurfer tools with FastSurfer longitudinal outputs
 

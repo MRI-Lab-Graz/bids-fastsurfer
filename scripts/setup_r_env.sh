@@ -6,7 +6,7 @@ set -euo pipefail
 # snapshot lockfile, and verify the analysis script runs basic checks.
 #
 # Usage:
-#   bash scripts/setup_r_env.sh [--no-snapshot] [--cran-mirror <url>] [--quiet]
+#   bash scripts/setup_r_env.sh [--no-snapshot] [--cran-mirror <url>] [--offline] [--quiet]
 #
 # Behavior:
 # - If renv is not installed system-wide, installs it to user library.
@@ -25,6 +25,7 @@ QUIET=0
 SNAPSHOT=1
 CRAN_MIRROR="https://cloud.r-project.org"
 LOG_FILE="setup_r_env.log"
+OFFLINE=${OFFLINE:-0}
 
 die() { echo "[setup_r_env] $*" >&2; exit 1; }
 log() { if [[ $QUIET -eq 0 ]]; then echo "[setup_r_env] $*"; fi }
@@ -33,6 +34,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-snapshot) SNAPSHOT=0; shift ;;
     --cran-mirror) CRAN_MIRROR="${2:-}"; shift 2 ;;
+    --offline) OFFLINE=1; shift ;;
     --quiet) QUIET=1; shift ;;
     *) die "Unknown option: $1" ;;
   esac
@@ -41,33 +43,76 @@ done
 command -v Rscript >/dev/null 2>&1 || die "Rscript not found. Please install R first."
 
 log "Rscript: $(Rscript --version | head -n1 || true)"
+if [[ "$OFFLINE" -eq 1 ]]; then
+  log "Offline mode enabled — only local source tarballs will be used (no network)."
+fi
 
 # Ensure renv is installed
 log "Ensuring renv is installed..."
-Rscript -e "if (!requireNamespace('renv', quietly=TRUE)) install.packages('renv', repos='${CRAN_MIRROR}')" >/dev/null
+if [[ "$OFFLINE" -eq 1 ]]; then
+  set +e
+  Rscript -e "quit(status = as.integer(!requireNamespace('renv', quietly=TRUE)))" >/dev/null
+  RC=$?
+  set -e
+  if [[ $RC -ne 0 ]]; then
+    RENV_LOCAL="${RENV_TARBALL:-}"
+    if [[ -z "$RENV_LOCAL" ]]; then
+      RENV_LOCAL=$(ls vendor/renv*.tar* 2>/dev/null | head -n1 || true)
+    fi
+    if [[ -n "$RENV_LOCAL" && -f "$RENV_LOCAL" ]]; then
+      log "Installing renv from local tarball: $RENV_LOCAL"
+      Rscript -e "install.packages('$RENV_LOCAL', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1 || die "Failed to install renv from $RENV_LOCAL"
+    else
+      die "Offline mode: renv not found and no local renv tarball provided (set RENV_TARBALL or place vendor/renv_*.tar.gz)."
+    fi
+  fi
+else
+  Rscript -e "if (!requireNamespace('renv', quietly=TRUE)) install.packages('renv', repos='${CRAN_MIRROR}')" >/dev/null
+fi
 
 # Initialize/activate project
 if [[ -f "renv.lock" ]]; then
-  log "renv.lock found — activating and restoring"
-  Rscript -e "renv::activate(); renv::restore(prompt=FALSE)" >/dev/null
+  if [[ "$OFFLINE" -eq 1 ]]; then
+    log "renv.lock found — activating (skip restore in offline mode)"
+    Rscript -e "renv::activate()" >/dev/null
+  else
+    log "renv.lock found — activating and restoring"
+    Rscript -e "renv::activate(); renv::restore(prompt=FALSE)" >/dev/null
+  fi
 else
   log "No renv.lock — initializing new renv project"
   Rscript -e "renv::init(bare=TRUE)" >/dev/null
 fi
 
-# Install CRAN deps
-log "Installing packages with pak (preferred)"
-# Try pak first (fast resolver, binary packages when available)
-set +e
-Rscript -e "if (!requireNamespace('pak', quietly=TRUE)) install.packages('pak', repos='https://r-lib.github.io/p/pak/stable'); pak::pkg_install(c('optparse','jsonlite','remotes'), upgrade = FALSE)" >>"${LOG_FILE}" 2>&1
-PAK_RC=$?
-set -e
-if [[ $PAK_RC -ne 0 ]]; then
-  log "pak failed; falling back to install.packages for CRAN deps"
-  Rscript -e "install.packages(c('optparse','jsonlite','remotes'), repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
+# Install CRAN deps (optparse, jsonlite, remotes)
+if [[ "$OFFLINE" -eq 1 ]]; then
+  for PKG in optparse jsonlite remotes; do
+    set +e
+    Rscript -e "quit(status = as.integer(!requireNamespace('$PKG', quietly=TRUE)))" >/dev/null
+    RC=$?
+    set -e
+    if [[ $RC -ne 0 ]]; then
+      CANDIDATE="$(ls vendor/${PKG}_*.tar* 2>/dev/null | head -n1 || true)"
+      if [[ -z "$CANDIDATE" ]]; then die "Offline mode: missing $PKG and no vendor/${PKG}_*.tar.gz found. Please provide local tarball."; fi
+      log "Installing $PKG from local tarball: $CANDIDATE"
+      Rscript -e "install.packages('$CANDIDATE', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1 || die "Failed to install $PKG from $CANDIDATE"
+    fi
+  done
+else
+  log "Installing packages with pak (preferred)"
+  # Try pak first (fast resolver, binary packages when available)
+  set +e
+  Rscript -e "if (!requireNamespace('pak', quietly=TRUE)) install.packages('pak', repos='https://r-lib.github.io/p/pak/stable'); pak::pkg_install(c('optparse','jsonlite','remotes'), upgrade = FALSE)" >>"${LOG_FILE}" 2>&1
+  PAK_RC=$?
+  set -e
+  if [[ $PAK_RC -ne 0 ]]; then
+    log "pak failed; falling back to install.packages for CRAN deps"
+    Rscript -e "install.packages(c('optparse','jsonlite','remotes'), repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
+  fi
+fi
 
 # Ensure bettermc (dependency of fslmer) is available before installing fslmer
-log "Ensuring 'bettermc' is installed (from local tarball or CRAN archive)"
+log "Ensuring 'bettermc' is installed (dependency of fslmer)"
 BETTERMC_VERSION="1.2.1"
 BETTERMC_URL="https://cran.r-project.org/src/contrib/Archive/bettermc/bettermc_${BETTERMC_VERSION}.tar.gz"
 BETTERMC_LOCAL="${BETTERMC_TARBALL:-}"
@@ -81,38 +126,54 @@ if [[ -z "$BETTERMC_LOCAL" ]]; then
     BETTERMC_LOCAL="$FIRST_MATCH"
   fi
 fi
-set +e
-# Prefer local tarball if provided (no network needed)
-if [[ -n "$BETTERMC_LOCAL" && -f "$BETTERMC_LOCAL" ]]; then
-  log "Installing bettermc from local tarball: $BETTERMC_LOCAL"
-  Rscript -e "install.packages('$BETTERMC_LOCAL', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1
-  RC_PAK_BMC_URL=$?
+if [[ "$OFFLINE" -eq 1 ]]; then
+  if [[ -n "$BETTERMC_LOCAL" && -f "$BETTERMC_LOCAL" ]]; then
+    log "Installing bettermc from local tarball: $BETTERMC_LOCAL"
+    Rscript -e "install.packages('$BETTERMC_LOCAL', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1 || true
+  else
+    die "Offline mode: Provide bettermc tarball via BETTERMC_TARBALL or vendor/bettermc_*.tar.gz"
+  fi
 else
-  # Prefer direct archive URL via pak to avoid solver issues
-  Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('${BETTERMC_URL}', upgrade = FALSE) else quit(status=99)" >>"${LOG_FILE}" 2>&1
-  RC_PAK_BMC_URL=$?
-fi
-set -e
-if [[ $RC_PAK_BMC_URL -eq 99 || $RC_PAK_BMC_URL -ne 0 ]]; then
-  log "pak archive install failed or pak not available; trying remotes::install_url for bettermc"
   set +e
-  Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_url('${BETTERMC_URL}')" >>"${LOG_FILE}" 2>&1
-  RC_REM_URL=$?
+  # Prefer local tarball if provided (no network needed)
+  if [[ -n "$BETTERMC_LOCAL" && -f "$BETTERMC_LOCAL" ]]; then
+    log "Installing bettermc from local tarball: $BETTERMC_LOCAL"
+    Rscript -e "install.packages('$BETTERMC_LOCAL', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1
+    RC_PAK_BMC_URL=$?
+  else
+    # Prefer direct archive URL via pak to avoid solver issues
+    Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('${BETTERMC_URL}', upgrade = FALSE) else quit(status=99)" >>"${LOG_FILE}" 2>&1
+    RC_PAK_BMC_URL=$?
+  fi
   set -e
-  if [[ $RC_REM_URL -ne 0 ]]; then
-    log "remotes::install_url failed; trying remotes::install_version for bettermc ${BETTERMC_VERSION}"
+  if [[ $RC_PAK_BMC_URL -eq 99 || $RC_PAK_BMC_URL -ne 0 ]]; then
+    log "pak archive install failed or pak not available; trying remotes::install_url for bettermc"
     set +e
-    Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_version('bettermc', version='${BETTERMC_VERSION}', repos='https://cran.r-project.org')" >>"${LOG_FILE}" 2>&1
-    RC_REM_VER=$?
+    Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_url('${BETTERMC_URL}')" >>"${LOG_FILE}" 2>&1
+    RC_REM_URL=$?
     set -e
-    if [[ $RC_REM_VER -ne 0 ]]; then
-      log "install_version failed; trying GitHub mirror cran/bettermc"
+    if [[ $RC_REM_URL -ne 0 ]]; then
+      log "remotes::install_url failed; trying remotes::install_version for bettermc ${BETTERMC_VERSION}"
       set +e
-      Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('cran/bettermc', upgrade = FALSE) else { if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_github('cran/bettermc') }" >>"${LOG_FILE}" 2>&1
-      RC_GH=$?
+      Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_version('bettermc', version='${BETTERMC_VERSION}', repos='https://cran.r-project.org')" >>"${LOG_FILE}" 2>&1
+      RC_REM_VER=$?
       set -e
-      if [[ $RC_GH -ne 0 ]]; then
-        log "Failed to install bettermc from all sources. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Failed to install 'bettermc' (required by fslmer). Check network/firewall and try again.";
+      if [[ $RC_REM_VER -ne 0 ]]; then
+        log "install_version failed; trying GitHub upstream akersting/bettermc"
+        set +e
+        Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install(sprintf('akersting/bettermc%s', if (nzchar(Sys.getenv('BETTERMC_REF'))) paste0('@', Sys.getenv('BETTERMC_REF')) else ''), upgrade = FALSE) else { if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_github(paste0('akersting/bettermc', if (nzchar(Sys.getenv('BETTERMC_REF'))) paste0('@', Sys.getenv('BETTERMC_REF')) else '')) }" >>"${LOG_FILE}" 2>&1
+        RC_GH_AK=$?
+        set -e
+        if [[ $RC_GH_AK -ne 0 ]]; then
+          log "Upstream GitHub failed; trying GitHub cran/bettermc mirror"
+          set +e
+          Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('cran/bettermc', upgrade = FALSE) else { if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_github('cran/bettermc') }" >>"${LOG_FILE}" 2>&1
+          RC_GH=$?
+          set -e
+          if [[ $RC_GH -ne 0 ]]; then
+            log "Failed to install bettermc from all sources. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Failed to install 'bettermc' (required by fslmer). Check network/firewall and try again.";
+          fi
+        fi
       fi
     fi
   fi
@@ -151,7 +212,7 @@ if [[ -n "$FSLMER_LOCAL" && -f "$FSLMER_LOCAL" ]]; then
   if [[ $RC_LOCAL -eq 0 ]]; then INSTALL_DONE=1; fi
 fi
 
-if [[ $INSTALL_DONE -eq 0 ]]; then
+if [[ $INSTALL_DONE -eq 0 && "$OFFLINE" -eq 0 ]]; then
   log "Installing fslmer via pak (preferred)"
   set +e
   Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install(sprintf('Deep-MI/fslmer%s', if (nzchar(Sys.getenv('FSLMER_REF'))) paste0('@', Sys.getenv('FSLMER_REF')) else ''), upgrade = FALSE) else quit(status=99)" >>"${LOG_FILE}" 2>&1
@@ -160,7 +221,7 @@ if [[ $INSTALL_DONE -eq 0 ]]; then
   if [[ $PAK_FSL_RC -eq 0 ]]; then INSTALL_DONE=1; fi
 fi
 
-if [[ $INSTALL_DONE -eq 0 ]]; then
+if [[ $INSTALL_DONE -eq 0 && "$OFFLINE" -eq 0 ]]; then
   log "pak install failed or pak unavailable; trying remotes::install_github"
   export R_REMOTES_NO_ERRORS_FROM_WARNINGS=true
   Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
@@ -171,7 +232,7 @@ if [[ $INSTALL_DONE -eq 0 ]]; then
   if [[ $RC_GH -eq 0 ]]; then INSTALL_DONE=1; fi
 fi
 
-if [[ $INSTALL_DONE -eq 0 ]]; then
+if [[ $INSTALL_DONE -eq 0 && "$OFFLINE" -eq 0 ]]; then
   log "remotes::install_github failed; trying remotes::install_url from GitHub archive"
   set +e
   Rscript -e "remotes::install_url('${FSLMER_ARCHIVE_URL}', build=FALSE, dependencies=c('Depends','Imports','LinkingTo'), upgrade='never', quiet=TRUE)" >>"${LOG_FILE}" 2>&1
@@ -181,7 +242,11 @@ if [[ $INSTALL_DONE -eq 0 ]]; then
 fi
 
 if [[ $INSTALL_DONE -eq 0 ]]; then
-  log "fslmer install failed. Showing last 100 log lines:"; tail -n 100 "${LOG_FILE}" || true; die "Failed to install fslmer";
+  if [[ "$OFFLINE" -eq 1 ]]; then
+    die "Offline mode: fslmer local tarball not provided (set FSLMER_TARBALL or place vendor/fslmer_*.tar.gz)"
+  else
+    log "fslmer install failed. Showing last 100 log lines:"; tail -n 100 "${LOG_FILE}" || true; die "Failed to install fslmer";
+  fi
 fi
 
 # Verify fslmer present
