@@ -102,18 +102,30 @@ if ("fsid-base" %in% names(qdec) && !("fsid.base" %in% names(qdec))) {
 
 # Merge
 dat <- merge(qdec, aseg, by=c(base_id_col, "fsid"))
+cat("DEBUG: Merged data rows:", nrow(dat), "\n")
 if (nrow(dat) == 0) stop("Merged data is empty; check IDs and inputs")
 
+cat("DEBUG: Available columns in merged data:\n")
+print(names(dat))
+
 # Order by subject then time
-dat <- dat[order(dat$fsid.base, dat[[time_col]]), ]
+dat <- dat[order(dat[[base_id_col]], dat[[time_col]]), ]
 
 # Build response Y and ni
+cat("DEBUG: Looking for ROI column:", opt$roi, "\n")
 if (!(opt$roi %in% names(dat))) {
   # Try to adapt: replace '-' with '.' in ROI name
   roi2 <- gsub("-", ".", opt$roi, fixed=TRUE)
-  if (!(roi2 %in% names(dat))) stop(sprintf("ROI column '%s' not found in merged data", opt$roi))
+  cat("DEBUG: ROI not found, trying with dots:", roi2, "\n")
+  if (!(roi2 %in% names(dat))) {
+    cat("Available ROI-like columns:\n")
+    roi_cols <- names(dat)[grepl("Hippocampus|Amygdala|Thalamus", names(dat), ignore.case=TRUE)]
+    print(roi_cols)
+    stop(sprintf("ROI column '%s' not found in merged data", opt$roi))
+  }
   opt$roi <- roi2
 }
+cat("DEBUG: Using ROI column:", opt$roi, "\n")
 Y <- matrix(dat[[opt$roi]], ncol=1)
 ni <- matrix(unname(table(dat$fsid.base)), ncol=1)
 
