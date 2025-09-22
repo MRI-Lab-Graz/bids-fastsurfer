@@ -449,6 +449,14 @@ Search paths and environment variables for local tarballs:
 - bettermc: set `BETTERMC_TARBALL=/abs/path/to/bettermc_1.2.1.tar.gz` or place under `vendor/`
 - fslmer: set `FSLMER_TARBALL=/abs/path/to/fslmer_*.tar.gz` or place under `vendor/`
 
+Online fallbacks (when not using `--offline`):
+
+- For bettermc, the installer will first try the CRAN archive tarball; if that fails it falls back to GitHub:
+  - `gfkse/bettermc` (default upstream)
+  - `akersting/bettermc` (alternate upstream)
+  - `cran/bettermc` (mirror)
+- You can pin a tag with `BETTERMC_REF` (e.g., `BETTERMC_REF=v1.2.1`) or override the repo via `BETTERMC_GITHUB=owner/repo`.
+
 Notes:
 
 - In offline mode, `renv::restore()` is skipped; only `renv::activate()` is run. Snapshotting still works.

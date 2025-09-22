@@ -159,19 +159,26 @@ else
       RC_REM_VER=$?
       set -e
       if [[ $RC_REM_VER -ne 0 ]]; then
-        log "install_version failed; trying GitHub upstream akersting/bettermc"
+        log "install_version failed; trying GitHub upstream gfkse/bettermc"
         set +e
-        Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install(sprintf('akersting/bettermc%s', if (nzchar(Sys.getenv('BETTERMC_REF'))) paste0('@', Sys.getenv('BETTERMC_REF')) else ''), upgrade = FALSE) else { if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_github(paste0('akersting/bettermc', if (nzchar(Sys.getenv('BETTERMC_REF'))) paste0('@', Sys.getenv('BETTERMC_REF')) else '')) }" >>"${LOG_FILE}" 2>&1
-        RC_GH_AK=$?
+        Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install(sprintf('%s%s', if (nzchar(Sys.getenv('BETTERMC_GITHUB'))) Sys.getenv('BETTERMC_GITHUB') else 'gfkse/bettermc', if (nzchar(Sys.getenv('BETTERMC_REF'))) paste0('@', Sys.getenv('BETTERMC_REF')) else ''), upgrade = FALSE) else { if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_github(paste0(if (nzchar(Sys.getenv('BETTERMC_GITHUB'))) Sys.getenv('BETTERMC_GITHUB') else 'gfkse/bettermc', if (nzchar(Sys.getenv('BETTERMC_REF'))) paste0('@', Sys.getenv('BETTERMC_REF')) else '')) }" >>"${LOG_FILE}" 2>&1
+        RC_GH_GFKSE=$?
         set -e
-        if [[ $RC_GH_AK -ne 0 ]]; then
-          log "Upstream GitHub failed; trying GitHub cran/bettermc mirror"
+        if [[ $RC_GH_GFKSE -ne 0 ]]; then
+          log "Upstream gfkse/bettermc failed; trying GitHub akersting/bettermc"
           set +e
-          Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('cran/bettermc', upgrade = FALSE) else { if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_github('cran/bettermc') }" >>"${LOG_FILE}" 2>&1
-          RC_GH=$?
+          Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install(sprintf('akersting/bettermc%s', if (nzchar(Sys.getenv('BETTERMC_REF'))) paste0('@', Sys.getenv('BETTERMC_REF')) else ''), upgrade = FALSE) else { if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_github(paste0('akersting/bettermc', if (nzchar(Sys.getenv('BETTERMC_REF'))) paste0('@', Sys.getenv('BETTERMC_REF')) else '')) }" >>"${LOG_FILE}" 2>&1
+          RC_GH_AK=$?
           set -e
-          if [[ $RC_GH -ne 0 ]]; then
-            log "Failed to install bettermc from all sources. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Failed to install 'bettermc' (required by fslmer). Check network/firewall and try again.";
+          if [[ $RC_GH_AK -ne 0 ]]; then
+            log "Upstream GitHub failed; trying GitHub cran/bettermc mirror"
+            set +e
+            Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('cran/bettermc', upgrade = FALSE) else { if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_github('cran/bettermc') }" >>"${LOG_FILE}" 2>&1
+            RC_GH=$?
+            set -e
+            if [[ $RC_GH -ne 0 ]]; then
+              log "Failed to install bettermc from all sources. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Failed to install 'bettermc' (required by fslmer). Check network/firewall and try again.";
+            fi
           fi
         fi
       fi
