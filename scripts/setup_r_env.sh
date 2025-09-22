@@ -84,16 +84,17 @@ else
   Rscript -e "renv::init(bare=TRUE)" >/dev/null
 fi
 
-# Install CRAN deps (optparse, jsonlite, remotes)
+# Install CRAN deps (optparse, jsonlite, remotes, checkmate)
 if [[ "$OFFLINE" -eq 1 ]]; then
-  for PKG in optparse jsonlite remotes; do
+  log "Offline mode: checking/installing CRAN deps: optparse, jsonlite, remotes, checkmate"
+  for PKG in optparse jsonlite remotes checkmate; do
     set +e
     Rscript -e "quit(status = as.integer(!requireNamespace('$PKG', quietly=TRUE)))" >/dev/null
     RC=$?
     set -e
     if [[ $RC -ne 0 ]]; then
       CANDIDATE="$(ls vendor/${PKG}_*.tar* 2>/dev/null | head -n1 || true)"
-      if [[ -z "$CANDIDATE" ]]; then die "Offline mode: missing $PKG and no vendor/${PKG}_*.tar.gz found. Please provide local tarball."; fi
+      if [[ -z "$CANDIDATE" ]]; then die "Offline mode: missing $PKG and no vendor/${PKG}_*.tar.gz found. Please provide local tarball (e.g., vendor/${PKG}_<version>.tar.gz)."; fi
       log "Installing $PKG from local tarball: $CANDIDATE"
       Rscript -e "install.packages('$CANDIDATE', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1 || die "Failed to install $PKG from $CANDIDATE"
     fi
@@ -102,12 +103,12 @@ else
   log "Installing packages with pak (preferred)"
   # Try pak first (fast resolver, binary packages when available)
   set +e
-  Rscript -e "if (!requireNamespace('pak', quietly=TRUE)) install.packages('pak', repos='https://r-lib.github.io/p/pak/stable'); pak::pkg_install(c('optparse','jsonlite','remotes'), upgrade = FALSE)" >>"${LOG_FILE}" 2>&1
+  Rscript -e "if (!requireNamespace('pak', quietly=TRUE)) install.packages('pak', repos='https://r-lib.github.io/p/pak/stable'); pak::pkg_install(c('optparse','jsonlite','remotes','checkmate'), upgrade = FALSE)" >>"${LOG_FILE}" 2>&1
   PAK_RC=$?
   set -e
   if [[ $PAK_RC -ne 0 ]]; then
     log "pak failed; falling back to install.packages for CRAN deps"
-    Rscript -e "install.packages(c('optparse','jsonlite','remotes'), repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
+    Rscript -e "install.packages(c('optparse','jsonlite','remotes','checkmate'), repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
   fi
 fi
 
@@ -131,7 +132,7 @@ if [[ "$OFFLINE" -eq 1 ]]; then
     log "Installing bettermc from local tarball: $BETTERMC_LOCAL"
     Rscript -e "install.packages('$BETTERMC_LOCAL', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1 || true
   else
-    die "Offline mode: Provide bettermc tarball via BETTERMC_TARBALL or vendor/bettermc_*.tar.gz"
+    die "Offline mode: Provide bettermc tarball via BETTERMC_TARBALL or vendor/bettermc_*.tar.gz (and ensure vendor/checkmate_*.tar.gz is present)"
   fi
 else
   set +e

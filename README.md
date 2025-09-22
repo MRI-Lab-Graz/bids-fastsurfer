@@ -445,7 +445,7 @@ OFFLINE=1 bash scripts/setup_r_env.sh --offline
 Search paths and environment variables for local tarballs:
 
 - renv: set `RENV_TARBALL=/abs/path/to/renv_X.Y.Z.tar.gz` or place under `vendor/`
-- CRAN deps (optparse, jsonlite, remotes): place tarballs under `vendor/` as `optparse_*.tar.gz`, etc.
+- CRAN deps (optparse, jsonlite, remotes, checkmate): place tarballs under `vendor/` as `optparse_*.tar.gz`, `checkmate_*.tar.gz`, etc.
 - bettermc: set `BETTERMC_TARBALL=/abs/path/to/bettermc_1.2.1.tar.gz` or place under `vendor/`
 - fslmer: set `FSLMER_TARBALL=/abs/path/to/fslmer_*.tar.gz` or place under `vendor/`
 
