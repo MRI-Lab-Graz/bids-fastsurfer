@@ -58,8 +58,8 @@ log "Installing CRAN packages: optparse, jsonlite, remotes"
 Rscript -e "install.packages(c('optparse','jsonlite','remotes'), repos='${CRAN_MIRROR}')" >/dev/null
 
 # Install fslmer
-log "Installing fslmer from GitHub (Deep-MI/fslmer) via remotes"
-Rscript -e "remotes::install_github('Deep-MI/fslmer', build_vignettes=TRUE, quiet=TRUE)" >/dev/null || die "Failed to install fslmer"
+log "Installing fslmer from GitHub (Deep-MI/fslmer) via remotes (no build/vignettes)"
+Rscript -e "remotes::install_github('Deep-MI/fslmer', build=FALSE, build_vignettes=FALSE, dependencies=TRUE, upgrade='never', quiet=TRUE)" >/dev/null || die "Failed to install fslmer"
 
 # Snapshot
 if [[ $SNAPSHOT -eq 1 ]]; then
