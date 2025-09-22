@@ -88,9 +88,22 @@ if [[ $RC_PAK_BMC_URL -eq 99 || $RC_PAK_BMC_URL -ne 0 ]]; then
     RC_REM_VER=$?
     set -e
     if [[ $RC_REM_VER -ne 0 ]]; then
-      log "Failed to install bettermc from all sources. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Failed to install 'bettermc' (required by fslmer). Check network/firewall and try again.";
+      log "install_version failed; trying GitHub mirror cran/bettermc"
+      set +e
+      Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('cran/bettermc', upgrade = FALSE) else { if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_github('cran/bettermc') }" >>"${LOG_FILE}" 2>&1
+      RC_GH=$?
+      set -e
+      if [[ $RC_GH -ne 0 ]]; then
+        log "Failed to install bettermc from all sources. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Failed to install 'bettermc' (required by fslmer). Check network/firewall and try again.";
+      fi
     fi
   fi
+fi
+
+# Verify bettermc present
+Rscript -e "quit(status = as.integer(!requireNamespace('bettermc', quietly=TRUE)))"
+if [[ $? -ne 0 ]]; then
+  log "'bettermc' is still not available after installation attempts. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Missing 'bettermc' prevents fslmer install.";
 fi
 fi
 
