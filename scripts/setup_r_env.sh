@@ -71,23 +71,23 @@ log "Ensuring 'bettermc' is installed (from CRAN archive if needed)"
 BETTERMC_VERSION="1.2.1"
 BETTERMC_URL="https://cran.r-project.org/src/contrib/Archive/bettermc/bettermc_${BETTERMC_VERSION}.tar.gz"
 set +e
-# Try pak with version pin first
-Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install(sprintf('bettermc@=%s', '${BETTERMC_VERSION}'), upgrade = FALSE) else quit(status=99)" >>"${LOG_FILE}" 2>&1
-RC_PAK_BMC=$?
+# Prefer direct archive URL via pak to avoid solver issues
+Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('${BETTERMC_URL}', upgrade = FALSE) else quit(status=99)" >>"${LOG_FILE}" 2>&1
+RC_PAK_BMC_URL=$?
 set -e
-if [[ $RC_PAK_BMC -eq 99 || $RC_PAK_BMC -ne 0 ]]; then
-  log "pak versioned install failed or pak not available; trying remotes::install_version for bettermc ${BETTERMC_VERSION}"
+if [[ $RC_PAK_BMC_URL -eq 99 || $RC_PAK_BMC_URL -ne 0 ]]; then
+  log "pak archive install failed or pak not available; trying remotes::install_url for bettermc"
   set +e
-  Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_version('bettermc', version='${BETTERMC_VERSION}', repos='https://cran.r-project.org')" >>"${LOG_FILE}" 2>&1
-  RC_REM_VER=$?
+  Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_url('${BETTERMC_URL}')" >>"${LOG_FILE}" 2>&1
+  RC_REM_URL=$?
   set -e
-  if [[ $RC_REM_VER -ne 0 ]]; then
-    log "remotes::install_version failed; trying remotes::install_url from CRAN archive"
+  if [[ $RC_REM_URL -ne 0 ]]; then
+    log "remotes::install_url failed; trying remotes::install_version for bettermc ${BETTERMC_VERSION}"
     set +e
-    Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_url('${BETTERMC_URL}')" >>"${LOG_FILE}" 2>&1
-    RC_REM_URL=$?
+    Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}'); remotes::install_version('bettermc', version='${BETTERMC_VERSION}', repos='https://cran.r-project.org')" >>"${LOG_FILE}" 2>&1
+    RC_REM_VER=$?
     set -e
-    if [[ $RC_REM_URL -ne 0 ]]; then
+    if [[ $RC_REM_VER -ne 0 ]]; then
       log "Failed to install bettermc from all sources. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Failed to install 'bettermc' (required by fslmer). Check network/firewall and try again.";
     fi
   fi
@@ -110,6 +110,8 @@ fi
 if [[ $PAK_FSL_RC -eq 99 || $PAK_FSL_RC -ne 0 ]]; then
   log "Installing fslmer via remotes fallback (no build/vignettes)"
   export R_REMOTES_NO_ERRORS_FROM_WARNINGS=true
+  # Ensure remotes present in current library before calling it
+  Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
   Rscript -e "remotes::install_github('Deep-MI/fslmer'${FSLMER_REF_ARG}, build=FALSE, build_vignettes=FALSE, dependencies=c('Depends','Imports','LinkingTo'), upgrade='never', quiet=TRUE)" >>"${LOG_FILE}" 2>&1 || {
     log "fslmer install failed. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Failed to install fslmer"; }
 fi
