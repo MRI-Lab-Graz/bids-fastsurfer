@@ -77,43 +77,28 @@ if (isTRUE(opt$print_cols)) {
   quit(status=0)
 }
 
-# Identify ID column in aseg
-id_col <- opt$id_col
-if (is.null(id_col)) {
-  cand <- grep("^Measure[.:]volume$", names(aseg), ignore.case=TRUE, value=TRUE)
-  if (length(cand) == 0) stop("Could not find 'Measure:volume' column in aseg/aparc table; use --id-col to override")
-  id_col <- cand[[1]]
+# Standardize to 'fsid_base' with an underscore for safety
+if ("fsid-base" %in% names(qdec)) {
+  names(qdec)[names(qdec) == "fsid-base"] <- "fsid_base"
+} else if ("fsid.base" %in% names(qdec)) {
+  names(qdec)[names(qdec) == "fsid.base"] <- "fsid_base"
 }
 
-# Extract fsid and fsid.base
-aseg$fsid      <- sub("\\.long\\..*", "",  aseg[[id_col]])
-aseg$fsid.base <- sub(".*\\.long\\.",  "", aseg[[id_col]])
+# The script creates 'fsid.base', so we just rename it
+names(aseg)[names(aseg) == "fsid.base"] <- "fsid_b"
+names(aseg)[names(aseg) == "fsid_b"] <- "fsid_base"
 
-# Ensure time column
-time_col <- opt$time_col
-if (is.null(time_col)) {
-  if ("Time.From.Baseline" %in% names(qdec)) time_col <- "Time.From.Baseline"
-  else if ("tp" %in% names(qdec)) time_col <- "tp"
-  else stop("Could not infer time column. Set --time-col (e.g., tp or Time.From.Baseline)")
-}
-if (!(time_col %in% names(qdec))) stop(sprintf("Time column '%s' not found in qdec", time_col))
 
-# Handle different naming conventions for base ID column
-base_id_col <- "fsid.base"
-if ("fsid-base" %in% names(qdec) && !("fsid.base" %in% names(qdec))) {
-  base_id_col <- "fsid-base"
-  names(aseg)[names(aseg) == "fsid.base"] <- "fsid-base"
-}
+# Merge using the safe column name
+dat <- merge(qdec, aseg, by=c("fsid_base", "fsid"))
 
-# Merge
-dat <- merge(qdec, aseg, by=c(base_id_col, "fsid"))
 if (nrow(dat) == 0) stop("Merged data is empty; check IDs and inputs")
 
-# Order by subject then time (following fslmer documentation)
-dat <- dat[order(dat[, "fsid-base"], dat[, time_col]), ]
+# Order by subject then time (using the safe column name)
+dat <- dat[order(dat$fsid_base, dat[[time_col]]), ]
 
-# Create vector of observations per subject (following fslmer documentation) 
-ni <- matrix(unname(table(dat[, "fsid-base"])), ncol=1)
+# Create vector of observations per subject (using the safe column name)
+ni <- matrix(unname(table(dat$fsid_base)), ncol=1)
 
 # Function to analyze a single ROI
 analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
