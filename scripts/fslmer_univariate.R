@@ -102,35 +102,30 @@ if ("fsid-base" %in% names(qdec) && !("fsid.base" %in% names(qdec))) {
 
 # Merge
 dat <- merge(qdec, aseg, by=c(base_id_col, "fsid"))
-cat("DEBUG: Merged data rows:", nrow(dat), "\n")
 if (nrow(dat) == 0) stop("Merged data is empty; check IDs and inputs")
 
-cat("DEBUG: Available columns in merged data:\n")
-print(names(dat))
-
-# Order by subject then time
+# Order by subject then time (following fslmer documentation)
 dat <- dat[order(dat[[base_id_col]], dat[[time_col]]), ]
 
 # Build response Y and ni
-cat("DEBUG: Looking for ROI column:", opt$roi, "\n")
 if (!(opt$roi %in% names(dat))) {
-  # Try to adapt: replace '-' with '.' in ROI name
+  # Try to adapt: replace '-' with '.' in ROI name (R converts hyphens to dots)
   roi2 <- gsub("-", ".", opt$roi, fixed=TRUE)
-  cat("DEBUG: ROI not found, trying with dots:", roi2, "\n")
   if (!(roi2 %in% names(dat))) {
-    cat("Available ROI-like columns:\n")
-    roi_cols <- names(dat)[grepl("Hippocampus|Amygdala|Thalamus", names(dat), ignore.case=TRUE)]
-    print(roi_cols)
-    stop(sprintf("ROI column '%s' not found in merged data", opt$roi))
+    available_rois <- names(dat)[grepl("Hippocampus|Amygdala|Thalamus|Caudate|Putamen", names(dat), ignore.case=TRUE)]
+    stop(sprintf("ROI column '%s' not found. Available brain regions: %s", opt$roi, paste(available_rois, collapse=", ")))
   }
   opt$roi <- roi2
 }
-cat("DEBUG: Using ROI column:", opt$roi, "\n")
+
+# Extract ROI values as column vector (following fslmer documentation)
+Y <- matrix(dat[[opt$roi]], ncol=1)
+
+# Create vector of observations per subject (following fslmer documentation)
+ni <- matrix(unname(table(dat[[base_id_col]])), ncol=1)
 
 # Add 'y' column to data frame for formula parsing
 dat$y <- dat[[opt$roi]]
-Y <- matrix(dat$y, ncol=1)
-ni <- matrix(unname(table(dat[[base_id_col]])), ncol=1)
 
 # Design matrix from formula (fixed effects)
 form <- as.formula(opt$formula)
