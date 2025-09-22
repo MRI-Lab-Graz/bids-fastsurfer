@@ -87,6 +87,14 @@ if ("fsid-base" %in% names(qdec)) {
 # The script creates 'fsid.base', so we just rename it
 names(aseg)[names(aseg) == "fsid.base"] <- "fsid_base"
 
+# Debug: Check if fsid_base exists in both data frames
+if (!("fsid_base" %in% names(qdec))) {
+  stop(sprintf("fsid_base not found in qdec columns: %s", paste(names(qdec), collapse=", ")))
+}
+if (!("fsid_base" %in% names(aseg))) {
+  stop(sprintf("fsid_base not found in aseg columns: %s", paste(names(aseg), collapse=", ")))
+}
+
 # Set default time column if not specified
 if (is.null(opt$time_col)) {
   if ("tp" %in% names(qdec)) {
