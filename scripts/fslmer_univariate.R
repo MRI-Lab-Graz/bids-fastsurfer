@@ -110,10 +110,10 @@ dat <- merge(qdec, aseg, by=c(base_id_col, "fsid"))
 if (nrow(dat) == 0) stop("Merged data is empty; check IDs and inputs")
 
 # Order by subject then time (following fslmer documentation)
-dat <- dat[order(dat[["fsid-base"]], dat[[time_col]]), ]
+dat <- dat[order(dat[, "fsid-base"], dat[, time_col]), ]
 
 # Create vector of observations per subject (following fslmer documentation) 
-ni <- matrix(unname(table(dat[["fsid-base"]])), ncol=1)
+ni <- matrix(unname(table(dat[, "fsid-base"])), ncol=1)
 
 # Function to analyze a single ROI
 analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
