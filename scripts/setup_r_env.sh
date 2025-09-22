@@ -12,7 +12,7 @@ set -euo pipefail
 # - If renv is not installed system-wide, installs it to user library.
 # - If renv project not initialized, runs renv::init(); otherwise renv::activate() and renv::restore() if lockfile exists.
 # - Installs CRAN packages using pak (preferred) or remotes fallback
-#   - CRAN: optparse, jsonlite
+#   - CRAN: optparse, jsonlite, mgcv (mgcv is required for GAM runs)
 #   - GitHub: Deep-MI/fslmer
 # - Snapshots renv.lock (unless --no-snapshot)
 # - Verifies Rscript availability and prints package versions; runs a lightweight self-check of scripts/fslmer_univariate.R
@@ -109,16 +109,30 @@ if [[ "$OFFLINE" -eq 1 ]]; then
       Rscript -e "install.packages('$CANDIDATE', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1 || die "Failed to install $PKG from $CANDIDATE"
     fi
   done
+  # Optional: mgcv for GAM runs
+  set +e
+  Rscript -e "quit(status = as.integer(!requireNamespace('mgcv', quietly=TRUE)))" >/dev/null
+  MGCV_RC=$?
+  set -e
+  if [[ $MGCV_RC -ne 0 ]]; then
+    MGCV_TARBALL="$(ls vendor/mgcv_*.tar* 2>/dev/null | head -n1 || true)"
+    if [[ -n "$MGCV_TARBALL" ]]; then
+      log "Installing mgcv (required for GAM runs) from local tarball: $MGCV_TARBALL"
+      Rscript -e "install.packages('$MGCV_TARBALL', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1 || log "Warning: failed to install mgcv from $MGCV_TARBALL; GAM runs will not work until mgcv is available."
+    else
+      log "Offline mode: mgcv not installed (no vendor/mgcv_*.tar.gz found). If you plan to use --engine gam, provide an mgcv tarball or run setup online."
+    fi
+  fi
 else
   log "Installing packages with pak (preferred)"
   # Try pak first (fast resolver, binary packages when available)
   set +e
-  Rscript -e "if (!requireNamespace('pak', quietly=TRUE)) install.packages('pak', repos='https://r-lib.github.io/p/pak/stable'); pak::pkg_install(c('optparse','jsonlite','remotes','checkmate'), upgrade = FALSE)" >>"${LOG_FILE}" 2>&1
+  Rscript -e "if (!requireNamespace('pak', quietly=TRUE)) install.packages('pak', repos='https://r-lib.github.io/p/pak/stable'); pak::pkg_install(c('optparse','jsonlite','remotes','checkmate','mgcv'), upgrade = FALSE)" >>"${LOG_FILE}" 2>&1
   PAK_RC=$?
   set -e
   if [[ $PAK_RC -ne 0 ]]; then
     log "pak failed; falling back to install.packages for CRAN deps"
-    Rscript -e "install.packages(c('optparse','jsonlite','remotes','checkmate'), repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
+    Rscript -e "install.packages(c('optparse','jsonlite','remotes','checkmate','mgcv'), repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
   fi
 fi
 
@@ -281,8 +295,8 @@ if [[ $SNAPSHOT -eq 1 ]]; then
 fi
 
 # Verify loaded packages and versions
-log "Verifying R packages"
-Rscript -e "pkgs <- c('optparse','jsonlite','fslmer'); print(data.frame(pkg=pkgs, available=sapply(pkgs, requireNamespace, quietly=TRUE)))"
+log "Verifying R packages (mgcv is required for GAM runs)"
+Rscript -e "pkgs <- c('optparse','jsonlite','fslmer','mgcv'); print(data.frame(pkg=pkgs, available=sapply(pkgs, requireNamespace, quietly=TRUE)))"
 
 # Lightweight check: print columns of a dummy small table via the R script (should exit gracefully)
 if [[ -f scripts/fslmer_univariate.R ]]; then

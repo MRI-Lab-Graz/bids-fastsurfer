@@ -3,7 +3,11 @@
 suppressPackageStartupMessages({
   library(optparse)
   library(jsonlite)
+  # fslmer for LME
   library(fslmer)
+  # GLM base
+  library(stats)
+  # GAM (optional); load lazily later to avoid hard dependency
 })
 
 # Flexible univariate LME analysis for aseg/aparc tables using fslmer
@@ -24,6 +28,10 @@ option_list <- list(
   make_option(c("--all-regions"), action="store_true", default=FALSE, help="Run analysis on all brain regions (subcortical volumes)"),
   make_option(c("--region-pattern"), type="character", default=NULL, help="Regex to match ROI names (e.g., 'Hippocampus|Amygdala')"),
   make_option(c("--quiet"), action="store_true", default=FALSE, help="Reduce output verbosity"),
+  make_option(c("--include-summary"), action="store_true", default=FALSE, help="Include global/summary volume measures in multi-region analysis"),
+  make_option(c("--engine"), type="character", default="fslmer", help="Model engine: 'fslmer' (default), 'glm', or 'gam'"),
+  make_option(c("--family"), type="character", default="gaussian", help="GLM/GAM family (gaussian, binomial, poisson, Gamma, etc.) [ignored for fslmer]"),
+  make_option(c("--no-gam-re"), action="store_true", default=FALSE, help="Disable random intercept s(fsid_base, bs='re') in GAM"),
   make_option(c("--debug"), action="store_true", default=FALSE, help="Print detailed optimizer logs from fslmer")
 )
 
@@ -111,6 +119,21 @@ rois_to_analyze <- NULL
 if (multi_region) {
   exclude <- unique(c("fsid","fsid_base", time_col, names(qdec)))
   brain_cols <- setdiff(names(dat), exclude)
+  # Drop summary/global measures unless explicitly included
+  if (!isTRUE(opt$`include-summary`)) {
+    summary_patterns <- c(
+      "^BrainSegVol$", "^BrainSegVolNotVent$", "^CortexVol$",
+      "^lhCortexVol$", "^rhCortexVol$", "^CerebralWhiteMatterVol$",
+      "^lhCerebralWhiteMatterVol$", "^rhCerebralWhiteMatterVol$",
+      "^TotalGrayVol$", "^SubCortGrayVol$", "^SupraTentorialVol$",
+      "^SupraTentorialVolNotVent$", "^MaskVol$", "eTIV", "to\.eTIV$",
+      "^EstimatedTotalIntraCranialVol$", "^WM\.hypointensities$",
+      "hypointensities$", "^CC_", "^Optic\.Chiasm$", "^CSF$",
+      "^X3rd\.Ventricle$", "^X4th\.Ventricle$", "^X5th\.Ventricle$"
+    )
+    keep <- !Reduce(`|`, lapply(summary_patterns, function(p) grepl(p, brain_cols, perl=TRUE)))
+    brain_cols <- brain_cols[keep]
+  }
   if (isTRUE(opt$`all-regions`)) {
     rois_to_analyze <- brain_cols
   } else {
@@ -129,16 +152,47 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
     roi_name <- roi2
   }
   Y <- matrix(dat[[roi_name]], ncol=1)
+  # Skip degenerate ROIs (no variance) or mostly missing
+  yvec <- as.numeric(dat[[roi_name]])
+  if (all(is.na(yvec)) || sd(yvec, na.rm=TRUE) == 0) {
+    return(list(error=sprintf("ROI '%s' has zero variance or all NA; skipped", roi_name)))
+  }
   form <- as.formula(opt$formula)
   X <- model.matrix(form, dat)
-  zcols <- if (is.numeric(opt$zcols)) as.integer(opt$zcols) else as.integer(strsplit(opt$zcols, ",")[[1]])
-  if (any(is.na(zcols))) return(list(error="--zcols must be integers"))
   # Compact progress indicator
   if (!isTRUE(opt$quiet)) cat(sprintf("%s: ", roi_name))
   flush.console()
 
-  # Wrapper to optionally silence optimizer output
-  fit_fn <- function() lme_fit_FS(X, zcols, Y, ni)
+  engine <- tolower(opt$engine)
+  # Wrapper to optionally silence optimizer output and choose engine
+  fit_fn <- switch(engine,
+    fslmer = {
+      zcols <- if (is.numeric(opt$zcols)) as.integer(opt$zcols) else as.integer(strsplit(opt$zcols, ",")[[1]])
+      if (any(is.na(zcols))) return(list(error="--zcols must be integers"))
+      function() lme_fit_FS(X, zcols, Y, ni)
+    },
+    glm = {
+      dat$y <- as.numeric(dat[[roi_name]])
+      fam <- tryCatch(get(opt$family, mode="function"), error=function(e) NULL)
+      if (is.null(fam)) fam <- gaussian
+      fam <- fam()
+      function() stats::glm(update(form, y ~ .), data=dat, family=fam)
+    },
+    gam = {
+      if (!requireNamespace("mgcv", quietly=TRUE)) return(list(error="Package 'mgcv' is required for --engine gam"))
+      dat$y <- as.numeric(dat[[roi_name]])
+      fam <- tryCatch(get(opt$family, mode="function"), error=function(e) NULL)
+      if (is.null(fam)) fam <- gaussian
+      fam <- fam()
+      base_form <- paste0("y ~ s(", time_col, ", k=5)")
+      if (!isTRUE(opt$`no-gam-re`)) base_form <- paste0(base_form, "+ s(fsid_base, bs='re')")
+      gform <- as.formula(base_form)
+      function() mgcv::gam(gform, data=dat, family=fam, method="REML")
+    },
+    {
+      return(list(error=sprintf("Unknown --engine '%s' (use fslmer|glm|gam)", opt$engine)))
+    }
+  )
   run_fit <- function() {
     if (isTRUE(opt$debug)) {
       fit_fn()
@@ -154,17 +208,24 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
   }
 
   res <- tryCatch({
-    stats <- run_fit()
-    F_C <- NULL
-    Cvec <- NULL
-    if (!is.null(opt$contrast)) {
-      Cvec <- if (is.numeric(opt$contrast)) as.numeric(opt$contrast) else as.numeric(strsplit(opt$contrast, ",")[[1]])
-      if (length(Cvec) != ncol(X)) return(list(error=sprintf("Contrast length %d != ncol(X) %d", length(Cvec), ncol(X))))
-      C <- matrix(Cvec, nrow=1)
-      F_C <- lme_F(stats, C)
+    fit <- run_fit()
+    out <- list(roi=roi_name, engine=engine, X=X, Y=Y)
+    if (engine == "fslmer") {
+      F_C <- NULL; Cvec <- NULL
+      if (!is.null(opt$contrast)) {
+        Cvec <- if (is.numeric(opt$contrast)) as.numeric(opt$contrast) else as.numeric(strsplit(opt$contrast, ",")[[1]])
+        if (length(Cvec) != ncol(X)) return(list(error=sprintf("Contrast length %d != ncol(X) %d", length(Cvec), ncol(X))))
+        C <- matrix(Cvec, nrow=1)
+        F_C <- lme_F(fit, C)
+      }
+      out$stats <- fit; out$F_C <- F_C; out$Cvec <- Cvec
+    } else if (engine == "glm") {
+      out$glm <- fit
+    } else if (engine == "gam") {
+      out$gam <- fit
     }
     if (!isTRUE(opt$quiet)) cat("######## done\n")
-    list(roi=roi_name, stats=stats, F_C=F_C, X=X, Y=Y, zcols=zcols, Cvec=Cvec)
+    out
   }, error=function(e) list(error=sprintf("Model failed for %s: %s", roi_name, e$message)))
   res
 }
@@ -182,7 +243,28 @@ if (isTRUE(opt$save_merged)) write.csv(dat, file=file.path(outdir, "merged_data.
 
 if (multi_region) {
   coef_summary <- do.call(rbind, lapply(names(results), function(roi) {
-    r <- results[[roi]]; data.frame(roi=roi, coef=rownames(r$stats$Bhat), beta=as.numeric(r$stats$Bhat), stringsAsFactors=FALSE)
+    r <- results[[roi]]
+    engine <- if (!is.null(r$engine)) r$engine else "fslmer"
+    if (engine == "fslmer") {
+      bhat <- r$stats$Bhat
+      beta <- as.numeric(bhat)
+      cn <- rownames(bhat)
+      if (is.null(cn)) {
+        cn <- colnames(r$X)
+        if (is.null(cn) || length(cn) != length(beta)) cn <- paste0("beta", seq_along(beta))
+      }
+      data.frame(roi=roi, coef=cn, beta=beta, engine=engine, stringsAsFactors=FALSE)
+    } else if (engine == "glm") {
+      co <- tryCatch(stats::coef(r$glm), error=function(e) NULL)
+      if (is.null(co)) return(NULL)
+      data.frame(roi=roi, coef=names(co), beta=as.numeric(co), engine=engine, stringsAsFactors=FALSE)
+    } else if (engine == "gam") {
+      co <- tryCatch(stats::coef(r$gam), error=function(e) NULL)
+      if (is.null(co)) return(NULL)
+      data.frame(roi=roi, coef=names(co), beta=as.numeric(co), engine=engine, stringsAsFactors=FALSE)
+    } else {
+      NULL
+    }
   }))
   write.csv(coef_summary, file=file.path(outdir, "lme_coefficients.csv"), row.names=FALSE)
   if (!is.null(opt$contrast)) {
