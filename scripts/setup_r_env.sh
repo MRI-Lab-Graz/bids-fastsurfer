@@ -126,25 +126,68 @@ fi
 fi
 
 # Install fslmer
-log "Installing fslmer (Deep-MI/fslmer) via pak (preferred)"
-# Allow pinning a specific ref via env var FSLMER_REF (tag/branch/commit). Example: export FSLMER_REF=v0.2.0
-FSLMER_REF_ARG=""
-if [[ -n "${FSLMER_REF:-}" ]]; then FSLMER_REF_ARG=", ref='${FSLMER_REF}'"; fi
-
-set +e
-Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install(sprintf('Deep-MI/fslmer%s', if (nzchar(Sys.getenv('FSLMER_REF'))) paste0('@', Sys.getenv('FSLMER_REF')) else ''), upgrade = FALSE) else quit(status=99)" >>"${LOG_FILE}" 2>&1
-PAK_FSL_RC=$?
-set -e
-if [[ $PAK_FSL_RC -ne 0 && $PAK_FSL_RC -ne 99 ]]; then
-  log "pak install of fslmer failed (exit $PAK_FSL_RC); will try remotes fallback"
+log "Installing fslmer (Deep-MI/fslmer)"
+# Local tarball support and archive URL fallback
+FSLMER_LOCAL="${FSLMER_TARBALL:-}"
+if [[ -z "$FSLMER_LOCAL" ]]; then
+  FIRST_FSLMER=$(ls vendor/fslmer*.tar* 2>/dev/null | head -n 1 || true)
+  if [[ -n "$FIRST_FSLMER" ]]; then FSLMER_LOCAL="$FIRST_FSLMER"; fi
 fi
-if [[ $PAK_FSL_RC -eq 99 || $PAK_FSL_RC -ne 0 ]]; then
-  log "Installing fslmer via remotes fallback (no build/vignettes)"
+
+FSLMER_REF_SAFE="${FSLMER_REF:-}"
+if [[ -n "$FSLMER_REF_SAFE" ]]; then
+  FSLMER_ARCHIVE_URL="https://github.com/Deep-MI/fslmer/archive/refs/tags/${FSLMER_REF_SAFE}.tar.gz"
+else
+  FSLMER_ARCHIVE_URL="https://github.com/Deep-MI/fslmer/archive/refs/heads/master.tar.gz"
+fi
+
+INSTALL_DONE=0
+if [[ -n "$FSLMER_LOCAL" && -f "$FSLMER_LOCAL" ]]; then
+  log "Installing fslmer from local tarball: $FSLMER_LOCAL"
+  set +e
+  Rscript -e "install.packages('$FSLMER_LOCAL', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1
+  RC_LOCAL=$?
+  set -e
+  if [[ $RC_LOCAL -eq 0 ]]; then INSTALL_DONE=1; fi
+fi
+
+if [[ $INSTALL_DONE -eq 0 ]]; then
+  log "Installing fslmer via pak (preferred)"
+  set +e
+  Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install(sprintf('Deep-MI/fslmer%s', if (nzchar(Sys.getenv('FSLMER_REF'))) paste0('@', Sys.getenv('FSLMER_REF')) else ''), upgrade = FALSE) else quit(status=99)" >>"${LOG_FILE}" 2>&1
+  PAK_FSL_RC=$?
+  set -e
+  if [[ $PAK_FSL_RC -eq 0 ]]; then INSTALL_DONE=1; fi
+fi
+
+if [[ $INSTALL_DONE -eq 0 ]]; then
+  log "pak install failed or pak unavailable; trying remotes::install_github"
   export R_REMOTES_NO_ERRORS_FROM_WARNINGS=true
-  # Ensure remotes present in current library before calling it
   Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) install.packages('remotes', repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
-  Rscript -e "remotes::install_github('Deep-MI/fslmer'${FSLMER_REF_ARG}, build=FALSE, build_vignettes=FALSE, dependencies=c('Depends','Imports','LinkingTo'), upgrade='never', quiet=TRUE)" >>"${LOG_FILE}" 2>&1 || {
-    log "fslmer install failed. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Failed to install fslmer"; }
+  set +e
+  Rscript -e "remotes::install_github(paste0('Deep-MI/fslmer', if (nzchar(Sys.getenv('FSLMER_REF'))) paste0('@', Sys.getenv('FSLMER_REF')) else ''), build=FALSE, build_vignettes=FALSE, dependencies=c('Depends','Imports','LinkingTo'), upgrade='never', quiet=TRUE)" >>"${LOG_FILE}" 2>&1
+  RC_GH=$?
+  set -e
+  if [[ $RC_GH -eq 0 ]]; then INSTALL_DONE=1; fi
+fi
+
+if [[ $INSTALL_DONE -eq 0 ]]; then
+  log "remotes::install_github failed; trying remotes::install_url from GitHub archive"
+  set +e
+  Rscript -e "remotes::install_url('${FSLMER_ARCHIVE_URL}', build=FALSE, dependencies=c('Depends','Imports','LinkingTo'), upgrade='never', quiet=TRUE)" >>"${LOG_FILE}" 2>&1
+  RC_URL=$?
+  set -e
+  if [[ $RC_URL -eq 0 ]]; then INSTALL_DONE=1; fi
+fi
+
+if [[ $INSTALL_DONE -eq 0 ]]; then
+  log "fslmer install failed. Showing last 100 log lines:"; tail -n 100 "${LOG_FILE}" || true; die "Failed to install fslmer";
+fi
+
+# Verify fslmer present
+Rscript -e "quit(status = as.integer(!requireNamespace('fslmer', quietly=TRUE)))"
+if [[ $? -ne 0 ]]; then
+  log "fslmer still not available after installation attempts. Showing last 100 log lines:"; tail -n 100 "${LOG_FILE}" || true; die "Missing 'fslmer' after install attempts.";
 fi
 
 # Snapshot
