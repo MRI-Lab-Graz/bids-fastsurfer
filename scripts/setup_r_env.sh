@@ -59,12 +59,22 @@ fi
 log "Installing packages with pak (preferred)"
 # Try pak first (fast resolver, binary packages when available)
 set +e
-Rscript -e "if (!requireNamespace('pak', quietly=TRUE)) install.packages('pak', repos='https://r-lib.github.io/p/pak/stable'); pak::pkg_install(c('optparse','jsonlite'), upgrade = FALSE)" >>"${LOG_FILE}" 2>&1
+Rscript -e "if (!requireNamespace('pak', quietly=TRUE)) install.packages('pak', repos='https://r-lib.github.io/p/pak/stable'); pak::pkg_install(c('optparse','jsonlite','remotes'), upgrade = FALSE)" >>"${LOG_FILE}" 2>&1
 PAK_RC=$?
 set -e
 if [[ $PAK_RC -ne 0 ]]; then
   log "pak failed; falling back to install.packages for CRAN deps"
-  Rscript -e "install.packages(c('optparse','jsonlite'), repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
+  Rscript -e "install.packages(c('optparse','jsonlite','remotes'), repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
+
+# Ensure bettermc (dependency of fslmer) is available before installing fslmer
+log "Ensuring 'bettermc' (CRAN) is installed"
+set +e
+Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('CRAN:bettermc', upgrade = FALSE) else install.packages('bettermc', repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
+BETTERMC_RC=$?
+set -e
+if [[ $BETTERMC_RC -ne 0 ]]; then
+  log "bettermc installation reported an error; will proceed and let installer try again if needed"
+fi
 fi
 
 # Install fslmer
