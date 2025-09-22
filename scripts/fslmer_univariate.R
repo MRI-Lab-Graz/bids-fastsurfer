@@ -126,10 +126,10 @@ if (multi_region) {
       "^lhCortexVol$", "^rhCortexVol$", "^CerebralWhiteMatterVol$",
       "^lhCerebralWhiteMatterVol$", "^rhCerebralWhiteMatterVol$",
       "^TotalGrayVol$", "^SubCortGrayVol$", "^SupraTentorialVol$",
-      "^SupraTentorialVolNotVent$", "^MaskVol$", "eTIV", "to\.eTIV$",
-      "^EstimatedTotalIntraCranialVol$", "^WM\.hypointensities$",
-      "hypointensities$", "^CC_", "^Optic\.Chiasm$", "^CSF$",
-      "^X3rd\.Ventricle$", "^X4th\.Ventricle$", "^X5th\.Ventricle$"
+      "^SupraTentorialVolNotVent$", "^MaskVol$", "eTIV", "to\\.eTIV$",
+      "^EstimatedTotalIntraCranialVol$", "^WM\\.hypointensities$",
+      "hypointensities$", "^CC_", "^Optic\\.Chiasm$", "^CSF$",
+      "^X3rd\\.Ventricle$", "^X4th\\.Ventricle$", "^X5th\\.Ventricle$"
     )
     keep <- !Reduce(`|`, lapply(summary_patterns, function(p) grepl(p, brain_cols, perl=TRUE)))
     brain_cols <- brain_cols[keep]
