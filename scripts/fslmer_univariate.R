@@ -23,7 +23,8 @@ option_list <- list(
   make_option(c("--print-cols"), action="store_true", default=FALSE, help="Print column names (and heads) of qdec and aseg then exit"),
   make_option(c("--all-regions"), action="store_true", default=FALSE, help="Run analysis on all brain regions (subcortical volumes)"),
   make_option(c("--region-pattern"), type="character", default=NULL, help="Regex to match ROI names (e.g., 'Hippocampus|Amygdala')"),
-  make_option(c("--quiet"), action="store_true", default=FALSE, help="Reduce output verbosity")
+  make_option(c("--quiet"), action="store_true", default=FALSE, help="Reduce output verbosity"),
+  make_option(c("--debug"), action="store_true", default=FALSE, help="Print detailed optimizer logs from fslmer")
 )
 
 opt <- parse_args(OptionParser(option_list=option_list))
@@ -132,8 +133,28 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
   X <- model.matrix(form, dat)
   zcols <- if (is.numeric(opt$zcols)) as.integer(opt$zcols) else as.integer(strsplit(opt$zcols, ",")[[1]])
   if (any(is.na(zcols))) return(list(error="--zcols must be integers"))
+  # Compact progress indicator
+  if (!isTRUE(opt$quiet)) cat(sprintf("%s: ", roi_name))
+  flush.console()
+
+  # Wrapper to optionally silence optimizer output
+  fit_fn <- function() lme_fit_FS(X, zcols, Y, ni)
+  run_fit <- function() {
+    if (isTRUE(opt$debug)) {
+      fit_fn()
+    } else {
+      # Capture and discard optimizer chatter
+      zz <- file(tempfile(), open="wt"); zz2 <- file(tempfile(), open="wt")
+      on.exit({ try(close(zz), silent=TRUE); try(close(zz2), silent=TRUE) }, add=TRUE)
+      sink(zz); sink(zz2, type="message")
+      on.exit({ try(sink(NULL), silent=TRUE); try(sink(NULL, type="message"), silent=TRUE) }, add=TRUE)
+      fit <- fit_fn()
+      fit
+    }
+  }
+
   res <- tryCatch({
-    stats <- lme_fit_FS(X, zcols, Y, ni)
+    stats <- run_fit()
     F_C <- NULL
     Cvec <- NULL
     if (!is.null(opt$contrast)) {
@@ -142,6 +163,7 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
       C <- matrix(Cvec, nrow=1)
       F_C <- lme_F(stats, C)
     }
+    if (!isTRUE(opt$quiet)) cat("######## done\n")
     list(roi=roi_name, stats=stats, F_C=F_C, X=X, Y=Y, zcols=zcols, Cvec=Cvec)
   }, error=function(e) list(error=sprintf("Model failed for %s: %s", roi_name, e$message)))
   res
@@ -190,3 +212,11 @@ resolved <- list(
 jsonlite::write_json(resolved, file.path(outdir, "used_config.json"), pretty=TRUE, auto_unbox=TRUE)
 
 cat(sprintf("Done. Outputs in %s. Success: %d, Failed: %d\n", outdir, length(results), length(failed)))
+
+# Optional note about optimizer logs (only if --debug)
+if (isTRUE(opt$debug) && !isTRUE(opt$quiet)) {
+  cat("\nNote about optimizer progress:\n")
+  cat("- Lines like 'Likelihood at FS iteration k : <value>' come from fslmer's Fisher Scoring optimizer.\n")
+  cat("- 'Likelihood' is the model log-likelihood; it should increase (become less negative) and stabilize as the fit converges.\n")
+  cat("- 'Gradient norm' is the size of the score vector; small values (e.g., < 1e-3) indicate convergence.\n\n")
+}
