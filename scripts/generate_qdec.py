@@ -56,6 +56,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--strict", action="store_true", help="Fail if a subjects_dir timepoint has no matching participants row")
     p.add_argument("--inspect", action="store_true", help="Print participants.tsv columns and exit")
     p.add_argument("--bids", type=Path, default=None, help="Optional BIDS root to cross-check subjects/sessions consistency")
+    p.add_argument("--list-limit", type=int, default=20, help="Max number of IDs to show when listing missing subjects (default: 20)")
     return p.parse_args(argv)
 
 
@@ -271,22 +272,30 @@ def summarize_consistency(
     only_in_subjects_dir = sorted(sd_subjects - parts_subjects)
     if only_in_participants:
         print(f"Subjects in participants.tsv but missing in subjects_dir: {len(only_in_participants)}")
-        print(", ".join(only_in_participants[:20]) + (" ..." if len(only_in_participants) > 20 else ""))
+        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
+        print(", ".join(only_in_participants[:limit]) + (" ..." if len(only_in_participants) > limit else ""))
     if only_in_subjects_dir:
         print(f"Subjects in subjects_dir but missing in participants.tsv: {len(only_in_subjects_dir)}")
-        print(", ".join(only_in_subjects_dir[:20]) + (" ..." if len(only_in_subjects_dir) > 20 else ""))
+        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
+        print(", ".join(only_in_subjects_dir[:limit]) + (" ..." if len(only_in_subjects_dir) > limit else ""))
 
     if bids_root:
         bids_subjects, bids_pairs = scan_bids_subjects(bids_root)
         print(f"BIDS subjects: {len(bids_subjects)}")
         missing_in_sd = sorted(bids_subjects - sd_subjects)
         missing_in_parts = sorted(bids_subjects - parts_subjects)
+        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
+        # Avoid repeating the exact same list twice. If participants-missing and BIDS-missing-in-sd are identical,
+        # suppress the second detailed list and only print counts.
         if missing_in_sd:
             print(f"BIDS subjects missing in subjects_dir: {len(missing_in_sd)}")
-            print(", ".join(missing_in_sd[:20]) + (" ..." if len(missing_in_sd) > 20 else ""))
+            if missing_in_sd != only_in_participants:
+                print(", ".join(missing_in_sd[:limit]) + (" ..." if len(missing_in_sd) > limit else ""))
         if missing_in_parts:
             print(f"BIDS subjects missing in participants.tsv: {len(missing_in_parts)}")
-            print(", ".join(missing_in_parts[:20]) + (" ..." if len(missing_in_parts) > 20 else ""))
+            # This is generally different; still avoid printing if equal to only_in_subjects_dir
+            if missing_in_parts != only_in_subjects_dir:
+                print(", ".join(missing_in_parts[:limit]) + (" ..." if len(missing_in_parts) > limit else ""))
 
 
 
@@ -326,6 +335,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.include_columns,
         args.strict,
     )
+    # set list limit globally for summary printing
+    setattr(sys.modules[__name__], "_LIST_LIMIT", max(0, int(args.list_limit)))
+
     write_qdec(args.output, header, rows)
     print(f"Wrote Qdec file: {args.output}")
     # Optional consistency summary

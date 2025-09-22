@@ -310,6 +310,7 @@ Inputs:
 - `--strict`: If set, the script fails when a timepoint has no matching participants row; otherwise fills `n/a`.
 - `--inspect`: Print `participants.tsv` column names and exit (useful for column selection).
 - `--bids`: Optional BIDS root; if provided, the script prints a consistency summary comparing `participants.tsv`, `subjects_dir`, and the BIDS tree.
+- `--list-limit`: Maximum number of subject IDs to print per list in the summary (default: 20). The summary avoids printing the same list twice when it’s identical across sources.
 
 Output columns:
 
