@@ -67,13 +67,24 @@ if [[ $PAK_RC -ne 0 ]]; then
   Rscript -e "install.packages(c('optparse','jsonlite','remotes'), repos='${CRAN_MIRROR}')" >>"${LOG_FILE}" 2>&1
 
 # Ensure bettermc (dependency of fslmer) is available before installing fslmer
-log "Ensuring 'bettermc' is installed (from CRAN archive if needed)"
+log "Ensuring 'bettermc' is installed (from local tarball or CRAN archive)"
 BETTERMC_VERSION="1.2.1"
 BETTERMC_URL="https://cran.r-project.org/src/contrib/Archive/bettermc/bettermc_${BETTERMC_VERSION}.tar.gz"
+BETTERMC_LOCAL="${BETTERMC_TARBALL:-}"
+if [[ -z "$BETTERMC_LOCAL" && -f "vendor/bettermc_${BETTERMC_VERSION}.tar.gz" ]]; then
+  BETTERMC_LOCAL="vendor/bettermc_${BETTERMC_VERSION}.tar.gz"
+fi
 set +e
-# Prefer direct archive URL via pak to avoid solver issues
-Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('${BETTERMC_URL}', upgrade = FALSE) else quit(status=99)" >>"${LOG_FILE}" 2>&1
-RC_PAK_BMC_URL=$?
+# Prefer local tarball if provided (no network needed)
+if [[ -n "$BETTERMC_LOCAL" && -f "$BETTERMC_LOCAL" ]]; then
+  log "Installing bettermc from local tarball: $BETTERMC_LOCAL"
+  Rscript -e "install.packages('$BETTERMC_LOCAL', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1
+  RC_PAK_BMC_URL=$?
+else
+  # Prefer direct archive URL via pak to avoid solver issues
+  Rscript -e "if (requireNamespace('pak', quietly=TRUE)) pak::pkg_install('${BETTERMC_URL}', upgrade = FALSE) else quit(status=99)" >>"${LOG_FILE}" 2>&1
+  RC_PAK_BMC_URL=$?
+fi
 set -e
 if [[ $RC_PAK_BMC_URL -eq 99 || $RC_PAK_BMC_URL -ne 0 ]]; then
   log "pak archive install failed or pak not available; trying remotes::install_url for bettermc"
