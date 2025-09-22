@@ -30,13 +30,16 @@ jq --version
 - `bids_long_fastsurfer.sh` — Longitudinal wrapper
 - `fastsurfer_options.json` — Example configuration file with cross/long sections
 - `license.txt` — Placeholder filename referenced by scripts (replace with your actual FreeSurfer license file path in the config)
+- `scripts/generate_qdec.py` — Build Qdec from BIDS participants.tsv and subjects_dir; optional .long symlink helper
+- `scripts/fslmer_univariate.R` — Flexible univariate LME helper using the fslmer R package
+- `configs/fslmer_univariate.example.json` — Example JSON config for the R script
 
 ## Example BIDS datasets
 
 If you need public BIDS datasets to try the wrappers, you can use these OpenNeuro examples (or any other BIDS-compatible dataset):
 
-- Longitudinal: ds004937 v1.0.1 — https://openneuro.org/datasets/ds004937/versions/1.0.1
-- Cross-sectional: ds004965 v1.0.1 — https://openneuro.org/datasets/ds004965/versions/1.0.1
+- Longitudinal: ds004937 v1.0.1 — <https://openneuro.org/datasets/ds004937/versions/1.0.1>
+- Cross-sectional: ds004965 v1.0.1 — <https://openneuro.org/datasets/ds004965/versions/1.0.1>
 
 Download using your preferred tool (OpenNeuro CLI, openneuro-py, DataLad, or web download) and point `<BIDS_ROOT>` to the dataset root.
 
@@ -57,7 +60,7 @@ openneuro download --snapshot 1.0.1 --dataset ds004937 --destination /path/to/BI
 openneuro download --snapshot 1.0.1 --dataset ds004965 --destination /path/to/BIDS-ds004965
 ```
 
-- Python: openneuro-py (https://pypi.org/project/openneuro-py/)
+- Python: openneuro-py (<https://pypi.org/project/openneuro-py/>)
 
 ```zsh
 # Create/activate a virtual environment (optional)
@@ -392,6 +395,25 @@ Outputs in `--outdir`:
 - `merged_data.csv` — optional merged data dump.
 
 This maps closely to the fslmer README tutorial while automating the data loading/merging and making the model specification configurable via flags.
+
+Config-driven usage and reproducibility:
+
+- Instead of passing many flags, you can provide a JSON config via `--config` (see `configs/fslmer_univariate.example.json`). Any CLI flag overrides the same field in the JSON. The script writes the merged settings to `<outdir>/used_config.json`.
+- Example JSON fields: `qdec`, `aseg`, `roi`, `formula`, `zcols` (array of integers), `contrast` (array), `outdir`, `time_col`, `id_col`.
+- To run: point `--config` to your JSON file; optionally add `--outdir` or other flags to override.
+
+Additional flag:
+
+- `--config`: Path to a JSON file with the same keys as the CLI flags. Useful to version-control analyses.
+
+R environment with renv:
+
+- To capture exact package versions, initialize renv in the repo root, install dependencies, then snapshot:
+  - Initialize: `renv::init()`
+  - Install: `install.packages(c("optparse","jsonlite","devtools"))`
+  - fslmer: `devtools::install_github("Deep-MI/fslmer", build_vignettes = TRUE)`
+  - Snapshot: `renv::snapshot()`
+- On another machine (or later), restore with: `renv::restore()`
 
 ### Using FreeSurfer tools with FastSurfer longitudinal outputs
 

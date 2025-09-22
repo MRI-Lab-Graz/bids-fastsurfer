@@ -3,6 +3,7 @@
 suppressPackageStartupMessages({
   library(optparse)
   library(fslmer)
+  library(jsonlite)
 })
 
 # Flexible univariate LME analysis for aseg/aparc tables using fslmer
@@ -15,6 +16,7 @@ suppressPackageStartupMessages({
 #  - Outputs: RDS of fit, text summary, optional CSV of merged data
 
 option_list <- list(
+  make_option(c("--config"), type="character", default=NULL, help="Path to JSON config file with arguments"),
   make_option(c("-q", "--qdec"), type="character", help="Path to qdec.table.dat (TSV)"),
   make_option(c("-a", "--aseg"), type="character", help="Path to aseg/aparc long table (TSV/whitespace)"),
   make_option(c("-r", "--roi"), type="character", help="ROI column name in aseg/aparc table (e.g., Left.Hippocampus)"),
@@ -33,8 +35,28 @@ opt <- parse_args(OptionParser(option_list=option_list))
 
 msg <- function(...) { if (!isTRUE(opt$quiet)) cat(sprintf(...), sep="") }
 
-stopifnot(!is.null(opt$qdec), !is.null(opt$aseg))
-if (is.null(opt$roi)) stop("--roi is required (e.g., Left.Hippocampus)")
+if (!is.null(opt$config)) {
+  if (!file.exists(opt$config)) stop(sprintf("Config file not found: %s", opt$config))
+  cfg <- jsonlite::fromJSON(opt$config, simplifyVector = TRUE)
+  # Merge: config provides defaults, CLI overrides if provided
+  merge_field <- function(name, default_val) {
+    if (!is.null(opt[[name]])) return(opt[[name]])
+    if (!is.null(cfg[[name]])) return(cfg[[name]])
+    default_val
+  }
+  opt$qdec       <- merge_field("qdec", opt$qdec)
+  opt$aseg       <- merge_field("aseg", opt$aseg)
+  opt$roi        <- merge_field("roi", opt$roi)
+  opt$formula    <- merge_field("formula", opt$formula)
+  opt$zcols      <- merge_field("zcols", opt$zcols)
+  opt$contrast   <- merge_field("contrast", opt$contrast)
+  opt$outdir     <- merge_field("outdir", opt$outdir)
+  opt$time_col   <- merge_field("time_col", opt$time_col)
+  opt$id_col     <- merge_field("id_col", opt$id_col)
+}
+
+if (is.null(opt$qdec) || is.null(opt$aseg)) stop("qdec and aseg paths are required (via flags or config)")
+if (is.null(opt$roi)) stop("ROI is required (e.g., Left.Hippocampus) — set via --roi or config")
 
 if (!file.exists(opt$qdec)) stop(sprintf("qdec file not found: %s", opt$qdec))
 if (!file.exists(opt$aseg)) stop(sprintf("aseg/aparc table not found: %s", opt$aseg))
@@ -92,8 +114,12 @@ ni <- matrix(unname(table(dat$fsid.base)), ncol=1)
 form <- as.formula(opt$formula)
 X <- model.matrix(form, dat)
 
-# Random effects columns
-zcols <- as.integer(strsplit(opt$zcols, ",")[[1]])
+# Random effects columns (support JSON arrays or comma-separated string)
+if (is.numeric(opt$zcols)) {
+  zcols <- as.integer(opt$zcols)
+} else {
+  zcols <- as.integer(strsplit(opt$zcols, ",")[[1]])
+}
 if (any(is.na(zcols))) stop("--zcols must be a comma-separated list of integers")
 
 msg("Design matrix: %d x %d\n", nrow(X), ncol(X))
@@ -103,10 +129,14 @@ msg("ROI: %s; observations: %d; subjects: %d\n", opt$roi, nrow(Y), length(ni))
 # Fit model
 stats <- lme_fit_FS(X, zcols, Y, ni)
 
-# Optional contrast
+# Optional contrast (support JSON array or comma-separated string)
 F_C <- NULL
 if (!is.null(opt$contrast)) {
-  Cvec <- as.numeric(strsplit(opt$contrast, ",")[[1]])
+  if (is.numeric(opt$contrast)) {
+    Cvec <- as.numeric(opt$contrast)
+  } else {
+    Cvec <- as.numeric(strsplit(opt$contrast, ",")[[1]])
+  }
   if (length(Cvec) != ncol(X)) stop(sprintf("Contrast length (%d) must match ncol(X) (%d)", length(Cvec), ncol(X)))
   C <- matrix(Cvec, nrow=1)
   F_C <- lme_F(stats, C)
@@ -124,5 +154,19 @@ if (!is.null(F_C)) {
 if (isTRUE(opt$save_merged)) {
   write.csv(dat, file=file.path(outdir, "merged_data.csv"), row.names=FALSE)
 }
+
+# Save the resolved config for reproducibility
+resolved <- list(
+  qdec = opt$qdec,
+  aseg = opt$aseg,
+  roi = opt$roi,
+  formula = opt$formula,
+  zcols = zcols,
+  contrast = if (!is.null(opt$contrast)) Cvec else NULL,
+  outdir = outdir,
+  time_col = time_col,
+  id_col = id_col
+)
+jsonlite::write_json(resolved, file.path(outdir, "used_config.json"), pretty = TRUE, auto_unbox = TRUE)
 
 msg("Done. Outputs written to %s\n", outdir)
