@@ -38,7 +38,7 @@ opt <- parse_args(OptionParser(option_list=option_list))
 msg <- function(...) { if (!isTRUE(opt$quiet)) cat(sprintf(...), sep="") }
 
 # If just printing columns, we don't need ROI specification
-if (isTRUE(opt$print_cols)) {
+if (isTRUE(opt$`print-cols`)) {
   if (is.null(opt$qdec) || is.null(opt$aseg)) stop("qdec and aseg paths are required for --print-cols")
   if (!file.exists(opt$qdec)) stop(sprintf("qdec file not found: %s", opt$qdec))
   if (!file.exists(opt$aseg)) stop(sprintf("aseg/aparc table not found: %s", opt$aseg))
