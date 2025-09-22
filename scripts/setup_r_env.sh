@@ -32,7 +32,7 @@ die() { echo "[setup_r_env] $*" >&2; exit 1; }
 log() { if [[ $QUIET -eq 0 ]]; then echo "[setup_r_env] $*"; fi }
 
 # Start fresh log for this run to avoid confusion with previous attempts
-echo "[setup_r_env] New run $(date -Is)" >"${LOG_FILE}"
+echo "[setup_r_env] New run $(date)" >"${LOG_FILE}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

@@ -93,8 +93,15 @@ if (is.null(time_col)) {
 }
 if (!(time_col %in% names(qdec))) stop(sprintf("Time column '%s' not found in qdec", time_col))
 
+# Handle different naming conventions for base ID column
+base_id_col <- "fsid.base"
+if ("fsid-base" %in% names(qdec) && !("fsid.base" %in% names(qdec))) {
+  base_id_col <- "fsid-base"
+  names(aseg)[names(aseg) == "fsid.base"] <- "fsid-base"
+}
+
 # Merge
-dat <- merge(qdec, aseg, by=c("fsid.base", "fsid"))
+dat <- merge(qdec, aseg, by=c(base_id_col, "fsid"))
 if (nrow(dat) == 0) stop("Merged data is empty; check IDs and inputs")
 
 # Order by subject then time
