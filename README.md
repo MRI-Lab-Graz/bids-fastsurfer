@@ -308,25 +308,40 @@ Inputs:
 - `--output`: Output path for the Qdec TSV (default: `qdec.table.dat`).
 - `--include-columns`: Optional explicit list of covariates to include from `participants.tsv`. If omitted, all columns except participant/session are included.
 - `--strict`: If set, the script fails when a timepoint has no matching participants row; otherwise fills `n/a`.
+- `--inspect`: Print `participants.tsv` column names and exit (useful for column selection).
+- `--bids`: Optional BIDS root; if provided, the script prints a consistency summary comparing `participants.tsv`, `subjects_dir`, and the BIDS tree.
 
 Output columns:
+
 - `fsid` — timepoint subject id (e.g., `sub-1291003_ses-1`)
 - `fsid-base` — base/template id (e.g., `sub-1291003`)
 - `tp` — numeric timepoint derived from `ses-<number>` (or `n/a` if not parseable)
 - Covariates — selected from `participants.tsv`
 
 Example:
+
 ```zsh
 python scripts/generate_qdec.py \
-	--participants /path/to/BIDS/participants.tsv \
-	--subjects-dir /path/to/derivatives/fastsurfer_long \
-	--output /path/to/qdec.table.dat \
-	--include-columns age sex group
+  --participants /path/to/BIDS/participants.tsv \
+  --subjects-dir /path/to/derivatives/fastsurfer_long \
+  --output /path/to/qdec.table.dat \
+  --include-columns age sex group
+```
+
+You can also inspect columns or print a consistency summary:
+
+```zsh
+# See columns in participants.tsv
+python scripts/generate_qdec.py --participants /path/to/participants.tsv --subjects-dir /path/to/subjects --inspect
+
+# Generate Qdec and print a summary of overlaps/missing subjects across sources
+python scripts/generate_qdec.py --participants /path/to/participants.tsv --subjects-dir /path/to/subjects --bids /path/to/BIDS
 ```
 
 Use the resulting `qdec.table.dat` with FreeSurfer longitudinal statistics and tools like `fslmer`:
-- FreeSurfer Longitudinal: https://surfer.nmr.mgh.harvard.edu/fswiki/LongitudinalStatistics
-- fslmer: https://github.com/Deep-MI/fslmer
+
+- FreeSurfer Longitudinal: <https://surfer.nmr.mgh.harvard.edu/fswiki/LongitudinalStatistics>
+- fslmer: <https://github.com/Deep-MI/fslmer>
 
 ## Credits and License
 

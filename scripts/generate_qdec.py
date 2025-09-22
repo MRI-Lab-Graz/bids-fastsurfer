@@ -32,7 +32,7 @@ import csv
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 
 
 SUBJECT_DIR_PATTERN = re.compile(r"^(?P<base>sub-[^/]+?)(?:_(?P<ses>ses-[^/]+))?$")
@@ -54,6 +54,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
              "If omitted, include all columns except participant and session columns.",
     )
     p.add_argument("--strict", action="store_true", help="Fail if a subjects_dir timepoint has no matching participants row")
+    p.add_argument("--inspect", action="store_true", help="Print participants.tsv columns and exit")
+    p.add_argument("--bids", type=Path, default=None, help="Optional BIDS root to cross-check subjects/sessions consistency")
     return p.parse_args(argv)
 
 
@@ -199,6 +201,95 @@ def build_qdec_rows(
     return header, rows
 
 
+def scan_bids_subjects(bids_root: Path) -> Tuple[Set[str], Set[Tuple[str, str]]]:
+    """Scan a BIDS root for participants and (participant, session) pairs.
+
+    Returns:
+      - subjects: set of participant ids like 'sub-001'
+      - sessions: set of (participant, session) like ('sub-001', 'ses-01')
+    """
+    if not bids_root.exists():
+        raise FileNotFoundError(f"BIDS root not found: {bids_root}")
+    if not bids_root.is_dir():
+        raise NotADirectoryError(f"BIDS root is not a directory: {bids_root}")
+
+    subs: Set[str] = set()
+    sess: Set[Tuple[str, str]] = set()
+    for child in bids_root.iterdir():
+        if not child.is_dir() or not child.name.startswith("sub-"):
+            continue
+        sub = child.name
+        subs.add(sub)
+        # look for ses-* under subject
+        for sesdir in child.iterdir():
+            if sesdir.is_dir() and sesdir.name.startswith("ses-"):
+                sess.add((sub, sesdir.name))
+    return subs, sess
+
+
+def summarize_consistency(
+    bids_root: Optional[Path],
+    subjects_dir: Path,
+    participants_rows: List[Dict[str, str]],
+    participant_col: str,
+    session_col: Optional[str],
+    timepoints: List[Tuple[str, str, Optional[str]]],
+) -> None:
+    """Print a summary comparing participants.tsv, subjects_dir, and optional BIDS tree.
+
+    Reports:
+      - counts of subjects/timepoints found in subjects_dir
+      - subjects present in participants.tsv but missing in subjects_dir
+      - subjects present in subjects_dir but missing in participants.tsv
+      - if BIDS is provided: subjects/sessions present in BIDS but missing elsewhere
+    """
+    # Participants sets
+    parts_subjects: Set[str] = set(r.get(participant_col, "") for r in participants_rows if r.get(participant_col))
+    parts_pairs: Set[Tuple[str, str]] = set()
+    if session_col:
+        for r in participants_rows:
+            sub = r.get(participant_col)
+            ses = r.get(session_col)
+            if sub and ses:
+                parts_pairs.add((sub, ses))
+
+    # Subjects_dir sets
+    sd_subjects: Set[str] = set()
+    sd_pairs: Set[Tuple[str, str]] = set()
+    for fsid, base, ses in timepoints:
+        sd_subjects.add(base)
+        if ses:
+            sd_pairs.add((base, ses))
+
+    print("=== Qdec/Subjects summary ===")
+    print(f"subjects_dir: {subjects_dir}")
+    print(f"participants.tsv subjects: {len(parts_subjects)}")
+    print(f"subjects_dir subjects (with any timepoints): {len(sd_subjects)}")
+    print(f"subjects_dir timepoints: {len(timepoints)}")
+
+    only_in_participants = sorted(parts_subjects - sd_subjects)
+    only_in_subjects_dir = sorted(sd_subjects - parts_subjects)
+    if only_in_participants:
+        print(f"Subjects in participants.tsv but missing in subjects_dir: {len(only_in_participants)}")
+        print(", ".join(only_in_participants[:20]) + (" ..." if len(only_in_participants) > 20 else ""))
+    if only_in_subjects_dir:
+        print(f"Subjects in subjects_dir but missing in participants.tsv: {len(only_in_subjects_dir)}")
+        print(", ".join(only_in_subjects_dir[:20]) + (" ..." if len(only_in_subjects_dir) > 20 else ""))
+
+    if bids_root:
+        bids_subjects, bids_pairs = scan_bids_subjects(bids_root)
+        print(f"BIDS subjects: {len(bids_subjects)}")
+        missing_in_sd = sorted(bids_subjects - sd_subjects)
+        missing_in_parts = sorted(bids_subjects - parts_subjects)
+        if missing_in_sd:
+            print(f"BIDS subjects missing in subjects_dir: {len(missing_in_sd)}")
+            print(", ".join(missing_in_sd[:20]) + (" ..." if len(missing_in_sd) > 20 else ""))
+        if missing_in_parts:
+            print(f"BIDS subjects missing in participants.tsv: {len(missing_in_parts)}")
+            print(", ".join(missing_in_parts[:20]) + (" ..." if len(missing_in_parts) > 20 else ""))
+
+
+
 def write_qdec(output_path: Path, header: List[str], rows: List[List[str]]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="") as f:
@@ -210,9 +301,22 @@ def write_qdec(output_path: Path, header: List[str], rows: List[List[str]]) -> N
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
+    # Existence checks
+    if not args.participants.exists():
+        print(f"ERROR: participants.tsv not found: {args.participants}", file=sys.stderr)
+        return 2
+    if not args.subjects_dir.exists() or not args.subjects_dir.is_dir():
+        print(f"ERROR: subjects_dir not found or not a directory: {args.subjects_dir}", file=sys.stderr)
+        return 2
+
     fieldnames, participants_rows, participant_col, session_col = read_participants(
         args.participants, args.participant_column, args.session_column
     )
+    if args.inspect:
+        print("participants.tsv columns:")
+        for fn in fieldnames:
+            print(f"- {fn}")
+        return 0
     timepoints = scan_subjects_dir(args.subjects_dir)
     header, rows = build_qdec_rows(
         timepoints,
@@ -224,6 +328,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     write_qdec(args.output, header, rows)
     print(f"Wrote Qdec file: {args.output}")
+    # Optional consistency summary
+    summarize_consistency(args.bids, args.subjects_dir, participants_rows, participant_col, session_col, timepoints)
     return 0
 
 
