@@ -28,6 +28,8 @@ option_list <- list(
   make_option(c("--time-col"), type="character", default=NULL, help="Name of time variable in qdec; if NULL and 'tp' exists, uses 'tp'"),
   make_option(c("--id-col"), type="character", default=NULL, help="Override ID column in aseg (default autodetect 'Measure:volume')"),
   make_option(c("--print-cols"), action="store_true", default=FALSE, help="Print column names of qdec and aseg then exit"),
+  make_option(c("--all-regions"), action="store_true", default=FALSE, help="Run analysis on all brain regions (subcortical volumes)"),
+  make_option(c("--region-pattern"), type="character", default=NULL, help="Regex pattern to match ROI names (e.g., 'Hippocampus|Amygdala')"),
   make_option(c("--quiet"), action="store_true", default=FALSE, help="Reduce output verbosity")
 )
 
@@ -56,7 +58,10 @@ if (!is.null(opt$config)) {
 }
 
 if (is.null(opt$qdec) || is.null(opt$aseg)) stop("qdec and aseg paths are required (via flags or config)")
-if (is.null(opt$roi)) stop("ROI is required (e.g., Left.Hippocampus) — set via --roi or config")
+
+# Check if we're doing multi-region analysis
+multi_region <- isTRUE(opt$`all-regions`) || !is.null(opt$`region-pattern`)
+if (!multi_region && is.null(opt$roi)) stop("ROI is required (e.g., Left.Hippocampus) — set via --roi, --all-regions, or --region-pattern")
 
 if (!file.exists(opt$qdec)) stop(sprintf("qdec file not found: %s", opt$qdec))
 if (!file.exists(opt$aseg)) stop(sprintf("aseg/aparc table not found: %s", opt$aseg))
@@ -105,69 +110,202 @@ dat <- merge(qdec, aseg, by=c(base_id_col, "fsid"))
 if (nrow(dat) == 0) stop("Merged data is empty; check IDs and inputs")
 
 # Order by subject then time (following fslmer documentation)
-dat <- dat[order(dat[[base_id_col]], dat[[time_col]]), ]
+dat <- dat[order(dat$`fsid-base`, dat[[time_col]]), ]
 
-# Build response Y and ni
-if (!(opt$roi %in% names(dat))) {
-  # Try to adapt: replace '-' with '.' in ROI name (R converts hyphens to dots)
-  roi2 <- gsub("-", ".", opt$roi, fixed=TRUE)
-  if (!(roi2 %in% names(dat))) {
-    available_rois <- names(dat)[grepl("Hippocampus|Amygdala|Thalamus|Caudate|Putamen", names(dat), ignore.case=TRUE)]
-    stop(sprintf("ROI column '%s' not found. Available brain regions: %s", opt$roi, paste(available_rois, collapse=", ")))
+# Create vector of observations per subject (following fslmer documentation) 
+ni <- matrix(unname(table(dat$`fsid-base`)), ncol=1)
+
+# Function to analyze a single ROI
+analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
+  msg <- function(...) if (!isTRUE(opt$quiet)) cat(sprintf(...))
+  
+  # Check if ROI exists in data
+  if (!(roi_name %in% names(dat))) {
+    # Try to adapt: replace '-' with '.' in ROI name (R converts hyphens to dots)
+    roi2 <- gsub("-", ".", roi_name, fixed=TRUE)
+    if (!(roi2 %in% names(dat))) {
+      return(list(error = sprintf("ROI column '%s' not found", roi_name)))
+    }
+    roi_name <- roi2
   }
-  opt$roi <- roi2
-}
-
-# Extract ROI values as column vector (following fslmer documentation)
-Y <- matrix(dat[[opt$roi]], ncol=1)
-
-# Create vector of observations per subject (following fslmer documentation)
-ni <- matrix(unname(table(dat[[base_id_col]])), ncol=1)
-
-# Add 'y' column to data frame for formula parsing
-dat$y <- dat[[opt$roi]]
-
-# Design matrix from formula (fixed effects)
-form <- as.formula(opt$formula)
-X <- model.matrix(form, dat)
-
-# Random effects columns (support JSON arrays or comma-separated string)
-if (is.numeric(opt$zcols)) {
-  zcols <- as.integer(opt$zcols)
-} else {
-  zcols <- as.integer(strsplit(opt$zcols, ",")[[1]])
-}
-if (any(is.na(zcols))) stop("--zcols must be a comma-separated list of integers")
-
-msg("Design matrix: %d x %d\n", nrow(X), ncol(X))
-msg("Random effects columns (Zcols): %s\n", paste(zcols, collapse=","))
-msg("ROI: %s; observations: %d; subjects: %d\n", opt$roi, nrow(Y), length(ni))
-
-# Fit model
-stats <- lme_fit_FS(X, zcols, Y, ni)
-
-# Optional contrast (support JSON array or comma-separated string)
-F_C <- NULL
-if (!is.null(opt$contrast)) {
-  if (is.numeric(opt$contrast)) {
-    Cvec <- as.numeric(opt$contrast)
+  
+  msg("Analyzing ROI: %s\n", roi_name)
+  
+  # Extract ROI values as column vector (following fslmer documentation)
+  Y <- matrix(dat[[roi_name]], ncol=1)
+  
+  # Add 'y' column to data frame for formula parsing
+  dat$y <- dat[[roi_name]]
+  
+  # Design matrix from formula (fixed effects)
+  form <- as.formula(opt$formula)
+  X <- model.matrix(form, dat)
+  
+  # Random effects columns (support JSON arrays or comma-separated string)
+  if (is.numeric(opt$zcols)) {
+    zcols <- as.integer(opt$zcols)
   } else {
-    Cvec <- as.numeric(strsplit(opt$contrast, ",")[[1]])
+    zcols <- as.integer(strsplit(opt$zcols, ",")[[1]])
   }
-  if (length(Cvec) != ncol(X)) stop(sprintf("Contrast length (%d) must match ncol(X) (%d)", length(Cvec), ncol(X)))
-  C <- matrix(Cvec, nrow=1)
-  F_C <- lme_F(stats, C)
+  if (any(is.na(zcols))) return(list(error = "--zcols must be a comma-separated list of integers"))
+  
+  msg("Design matrix: %d x %d\n", nrow(X), ncol(X))
+  msg("Random effects columns (Zcols): %s\n", paste(zcols, collapse=","))
+  msg("ROI: %s; observations: %d; subjects: %d\n", roi_name, nrow(Y), length(ni))
+  
+  # Fit model
+  tryCatch({
+    stats <- lme_fit_FS(X, zcols, Y, ni)
+    
+    # Optional contrast (support JSON array or comma-separated string)
+    F_C <- NULL
+    if (!is.null(opt$contrast)) {
+      if (is.numeric(opt$contrast)) {
+        Cvec <- as.numeric(opt$contrast)
+      } else {
+        Cvec <- as.numeric(strsplit(opt$contrast, ",")[[1]])
+      }
+      if (length(Cvec) != ncol(X)) return(list(error = sprintf("Contrast length (%d) must match ncol(X) (%d)", length(Cvec), ncol(X))))
+      C <- matrix(Cvec, nrow=1)
+      F_C <- lme_F(stats, C)
+    }
+    
+    return(list(
+      roi = roi_name,
+      stats = stats,
+      F_C = F_C,
+      X = X,
+      Y = Y,
+      zcols = zcols,
+      Cvec = if(!is.null(opt$contrast)) Cvec else NULL
+    ))
+  }, error = function(e) {
+    return(list(error = sprintf("Model fitting failed for %s: %s", roi_name, e$message)))
+  })
 }
+
+# Determine which ROIs to analyze
+if (multi_region) {
+  # Get all potential brain region columns
+  brain_cols <- names(dat)[!names(dat) %in% c("fsid-base", "fsid", time_col, names(qdec))]
+  
+  if (isTRUE(opt$`all-regions`)) {
+    # Use all subcortical/brain regions (exclude summary measures)
+    rois_to_analyze <- brain_cols[grepl("^(Left|Right)\\.", brain_cols) | 
+                                  grepl("(Hippocampus|Amygdala|Thalamus|Caudate|Putamen|Pallidum|Accumbens|Ventricle|Stem)", brain_cols, ignore.case=TRUE)]
+  } else {
+    # Use pattern matching
+    pattern <- opt$`region-pattern`
+    rois_to_analyze <- brain_cols[grepl(pattern, brain_cols, ignore.case=TRUE, perl=TRUE)]
+  }
+  
+  if (length(rois_to_analyze) == 0) {
+    stop("No ROIs found matching criteria. Available brain regions: ", paste(head(brain_cols, 10), collapse=", "))
+  }
+  
+  cat(sprintf("Found %d ROIs to analyze: %s\n", length(rois_to_analyze), paste(head(rois_to_analyze, 5), collapse=", ")))
+  if (length(rois_to_analyze) > 5) cat("... and", length(rois_to_analyze) - 5, "more\n")
+  
+} else {
+  # Single ROI analysis
+  rois_to_analyze <- opt$roi
+}
+
+# Run analysis on all selected ROIs
+results <- list()
+failed_rois <- c()
+
+for (roi in rois_to_analyze) {
+  result <- analyze_roi(roi, dat, ni, opt, time_col)
+  
+  if (!is.null(result$error)) {
+    cat("ERROR:", result$error, "\n")
+    failed_rois <- c(failed_rois, roi)
+    next
+  }
+  
+  results[[roi]] <- result
+}
+
+if (length(results) == 0) {
+  stop("No ROIs were successfully analyzed")
+}
+
+cat(sprintf("Successfully analyzed %d ROIs", length(results)))
+if (length(failed_rois) > 0) {
+  cat(sprintf(" (%d failed: %s)", length(failed_rois), paste(head(failed_rois, 3), collapse=", ")))
+}
+cat("\n")
 
 # Outputs
 outdir <- opt$outdir
 dir.create(outdir, showWarnings=FALSE, recursive=TRUE)
-saveRDS(stats, file=file.path(outdir, "fit.rds"))
-write.table(data.frame(Bhat=I(stats$Bhat)), file=file.path(outdir, "Bhat.txt"), quote=FALSE, sep="\t")
-if (!is.null(F_C)) {
-  write.table(data.frame(F=F_C$F, pval=F_C$pval, sgn=F_C$sgn, df=F_C$df),
-              file=file.path(outdir, "F_test.txt"), quote=FALSE, sep="\t", row.names=FALSE)
+
+if (multi_region) {
+  # Multi-region outputs: create summary tables and individual results
+  
+  # Create summary table of coefficients
+  coef_summary <- do.call(rbind, lapply(names(results), function(roi) {
+    r <- results[[roi]]
+    data.frame(
+      roi = roi,
+      coef_name = rownames(r$stats$Bhat),
+      beta = as.numeric(r$stats$Bhat),
+      stringsAsFactors = FALSE
+    )
+  }))
+  write.csv(coef_summary, file=file.path(outdir, "lme_coefficients.csv"), row.names=FALSE)
+  
+  # Create summary table of F-tests (if contrasts were used)
+  if (!is.null(opt$contrast)) {
+    f_summary <- do.call(rbind, lapply(names(results), function(roi) {
+      r <- results[[roi]]
+      if (!is.null(r$F_C)) {
+        data.frame(
+          roi = roi,
+          F = r$F_C$F,
+          pval = r$F_C$pval,
+          sgn = r$F_C$sgn,
+          df = r$F_C$df,
+          stringsAsFactors = FALSE
+        )
+      }
+    }))
+    write.csv(f_summary, file=file.path(outdir, "lme_F_test.csv"), row.names=FALSE)
+  }
+  
+  # Save individual results
+  roi_dir <- file.path(outdir, "individual_rois")
+  dir.create(roi_dir, showWarnings=FALSE, recursive=TRUE)
+  
+  for (roi in names(results)) {
+    r <- results[[roi]]
+    safe_roi_name <- gsub("[^A-Za-z0-9_-]", "_", roi)
+    
+    saveRDS(r$stats, file=file.path(roi_dir, paste0(safe_roi_name, "_fit.rds")))
+    write.table(data.frame(Bhat=I(r$stats$Bhat)), 
+                file=file.path(roi_dir, paste0(safe_roi_name, "_Bhat.txt")), 
+                quote=FALSE, sep="\t")
+    
+    if (!is.null(r$F_C)) {
+      write.table(data.frame(F=r$F_C$F, pval=r$F_C$pval, sgn=r$F_C$sgn, df=r$F_C$df),
+                  file=file.path(roi_dir, paste0(safe_roi_name, "_F_test.txt")), 
+                  quote=FALSE, sep="\t", row.names=FALSE)
+    }
+  }
+  
+} else {
+  # Single ROI outputs (backward compatibility)
+  r <- results[[1]]
+  saveRDS(r$stats, file=file.path(outdir, "fit.rds"))
+  write.table(data.frame(Bhat=I(r$stats$Bhat)), file=file.path(outdir, "Bhat.txt"), quote=FALSE, sep="\t")
+  
+  if (!is.null(r$F_C)) {
+    write.table(data.frame(F=r$F_C$F, pval=r$F_C$pval, sgn=r$F_C$sgn, df=r$F_C$df),
+                file=file.path(outdir, "F_test.txt"), quote=FALSE, sep="\t", row.names=FALSE)
+  }
 }
+
 if (isTRUE(opt$save_merged)) {
   write.csv(dat, file=file.path(outdir, "merged_data.csv"), row.names=FALSE)
 }
@@ -176,13 +314,16 @@ if (isTRUE(opt$save_merged)) {
 resolved <- list(
   qdec = opt$qdec,
   aseg = opt$aseg,
-  roi = opt$roi,
+  roi = if(multi_region) paste(rois_to_analyze, collapse=",") else opt$roi,
   formula = opt$formula,
-  zcols = zcols,
-  contrast = if (!is.null(opt$contrast)) Cvec else NULL,
+  zcols = if(multi_region) results[[1]]$zcols else results[[1]]$zcols,
+  contrast = if (!is.null(opt$contrast)) results[[1]]$Cvec else NULL,
   outdir = outdir,
   time_col = time_col,
-  id_col = id_col
+  id_col = opt$id_col,
+  multi_region = multi_region,
+  n_rois_analyzed = length(results),
+  n_rois_failed = length(failed_rois)
 )
 jsonlite::write_json(resolved, file.path(outdir, "used_config.json"), pretty = TRUE, auto_unbox = TRUE)
 
