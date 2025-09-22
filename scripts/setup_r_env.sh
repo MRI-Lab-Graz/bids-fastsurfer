@@ -197,6 +197,8 @@ else
       fi
     fi
   fi
+fi
+
 # Verify bettermc present
 Rscript -e "quit(status = as.integer(!requireNamespace('bettermc', quietly=TRUE)))"
 if [[ $? -ne 0 ]]; then
