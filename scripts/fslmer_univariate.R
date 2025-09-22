@@ -85,12 +85,21 @@ if ("fsid-base" %in% names(qdec)) {
 }
 
 # The script creates 'fsid.base', so we just rename it
-names(aseg)[names(aseg) == "fsid.base"] <- "fsid_b"
-names(aseg)[names(aseg) == "fsid_b"] <- "fsid_base"
+names(aseg)[names(aseg) == "fsid.base"] <- "fsid_base"
 
+# Set default time column if not specified
+if (is.null(opt$time_col)) {
+  if ("tp" %in% names(qdec)) {
+    time_col <- "tp"
+  } else {
+    stop("time_col not specified and 'tp' column not found in qdec")
+  }
+} else {
+  time_col <- opt$time_col
+}
 
 # Merge using the safe column name
-dat <- merge(qdec, aseg, by=c("fsid_base", "fsid"))
+dat <- merge(qdec, aseg, by="fsid_base")
 
 if (nrow(dat) == 0) stop("Merged data is empty; check IDs and inputs")
 
@@ -172,7 +181,7 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
 # Determine which ROIs to analyze
 if (multi_region) {
   # Get all potential brain region columns
-  brain_cols <- names(dat)[!names(dat) %in% c("fsid-base", "fsid", time_col, names(qdec))]
+  brain_cols <- names(dat)[!names(dat) %in% c("fsid_base", "fsid", time_col, names(qdec))]
   
   if (isTRUE(opt$`all-regions`)) {
     # Use all subcortical/brain regions (exclude summary measures)
