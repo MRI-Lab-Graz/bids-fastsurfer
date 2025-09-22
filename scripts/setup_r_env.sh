@@ -11,8 +11,8 @@ set -euo pipefail
 # Behavior:
 # - If renv is not installed system-wide, installs it to user library.
 # - If renv project not initialized, runs renv::init(); otherwise renv::activate() and renv::restore() if lockfile exists.
-# - Installs CRAN packages: optparse, jsonlite, devtools
-# - Installs fslmer from GitHub: Deep-MI/fslmer
+# - Installs CRAN packages: optparse, jsonlite, remotes
+# - Installs fslmer from GitHub via remotes: Deep-MI/fslmer
 # - Snapshots renv.lock (unless --no-snapshot)
 # - Verifies Rscript availability and prints package versions; runs a lightweight self-check of scripts/fslmer_univariate.R
 #
@@ -54,12 +54,12 @@ else
 fi
 
 # Install CRAN deps
-log "Installing CRAN packages: optparse, jsonlite, devtools"
-Rscript -e "install.packages(c('optparse','jsonlite','devtools'), repos='${CRAN_MIRROR}')" >/dev/null
+log "Installing CRAN packages: optparse, jsonlite, remotes"
+Rscript -e "install.packages(c('optparse','jsonlite','remotes'), repos='${CRAN_MIRROR}')" >/dev/null
 
 # Install fslmer
-log "Installing fslmer from GitHub (Deep-MI/fslmer)"
-Rscript -e "devtools::install_github('Deep-MI/fslmer', build_vignettes=TRUE, quiet=TRUE)" >/dev/null || die "Failed to install fslmer"
+log "Installing fslmer from GitHub (Deep-MI/fslmer) via remotes"
+Rscript -e "remotes::install_github('Deep-MI/fslmer', build_vignettes=TRUE, quiet=TRUE)" >/dev/null || die "Failed to install fslmer"
 
 # Snapshot
 if [[ $SNAPSHOT -eq 1 ]]; then
