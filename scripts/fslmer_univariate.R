@@ -182,11 +182,26 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
     gam = {
       if (!requireNamespace("mgcv", quietly=TRUE)) return(list(error="Package 'mgcv' is required for --engine gam"))
       dat$y <- as.numeric(dat[[roi_name]])
+      # Ensure time variable is numeric for s(time). If not, try to coerce sensibly.
+      tp_raw <- dat[[time_col]]
+      if (!is.numeric(tp_raw)) {
+        # Try to extract numeric part (e.g., ses-1 -> 1)
+        tp_num <- suppressWarnings(as.numeric(gsub("[^0-9]+", "", as.character(tp_raw))))
+        if (all(is.na(tp_num))) {
+          # Fallback: ordered factor mapping to 1..k by sorted unique levels
+          lev <- sort(unique(as.character(tp_raw)))
+          f <- factor(tp_raw, levels=lev, ordered=TRUE)
+          tp_num <- as.numeric(f)
+        }
+        dat[[time_col]] <- tp_num
+      }
+      # After coercion, validate there are at least 2 unique time points
+      uniq_t <- length(unique(dat[[time_col]][!is.na(dat[[time_col]])]))
+      if (uniq_t < 2) return(list(error=sprintf("Not enough unique values in '%s' for GAM (need >=2)", time_col)))
       fam <- tryCatch(get(opt$family, mode="function"), error=function(e) NULL)
       if (is.null(fam)) fam <- gaussian
       fam <- fam()
       # Choose k adaptively unless user specified --gam-k
-      uniq_t <- length(unique(dat[[time_col]]))
       k_user <- if (!is.na(opt$`gam-k`)) as.integer(opt$`gam-k`) else NA_integer_
       k_time <- if (!is.na(k_user)) k_user else max(2L, min(5L, uniq_t))
       if (!isTRUE(opt$quiet) && isTRUE(opt$debug)) cat(sprintf("[GAM] Using k=%d for s(%s) with %d unique values\n", k_time, time_col, uniq_t))
