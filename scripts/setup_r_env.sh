@@ -197,13 +197,10 @@ else
       fi
     fi
   fi
-fi
-
 # Verify bettermc present
 Rscript -e "quit(status = as.integer(!requireNamespace('bettermc', quietly=TRUE)))"
 if [[ $? -ne 0 ]]; then
   log "'bettermc' is still not available after installation attempts. Showing last 60 log lines:"; tail -n 60 "${LOG_FILE}" || true; die "Missing 'bettermc' prevents fslmer install.";
-fi
 fi
 
 # Install fslmer
