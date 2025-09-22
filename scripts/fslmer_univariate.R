@@ -126,8 +126,11 @@ if (!(opt$roi %in% names(dat))) {
   opt$roi <- roi2
 }
 cat("DEBUG: Using ROI column:", opt$roi, "\n")
-Y <- matrix(dat[[opt$roi]], ncol=1)
-ni <- matrix(unname(table(dat$fsid.base)), ncol=1)
+
+# Add 'y' column to data frame for formula parsing
+dat$y <- dat[[opt$roi]]
+Y <- matrix(dat$y, ncol=1)
+ni <- matrix(unname(table(dat[[base_id_col]]), ncol=1))
 
 # Design matrix from formula (fixed effects)
 form <- as.formula(opt$formula)
