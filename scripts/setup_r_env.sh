@@ -26,15 +26,20 @@ SNAPSHOT=1
 CRAN_MIRROR="https://cloud.r-project.org"
 LOG_FILE="setup_r_env.log"
 OFFLINE=${OFFLINE:-0}
+PREFER_ONLINE=${PREFER_ONLINE:-0}
 
 die() { echo "[setup_r_env] $*" >&2; exit 1; }
 log() { if [[ $QUIET -eq 0 ]]; then echo "[setup_r_env] $*"; fi }
+
+# Start fresh log for this run to avoid confusion with previous attempts
+echo "[setup_r_env] New run $(date -Is)" >"${LOG_FILE}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-snapshot) SNAPSHOT=0; shift ;;
     --cran-mirror) CRAN_MIRROR="${2:-}"; shift 2 ;;
     --offline) OFFLINE=1; shift ;;
+    --prefer-online) PREFER_ONLINE=1; shift ;;
     --quiet) QUIET=1; shift ;;
     *) die "Unknown option: $1" ;;
   esac
@@ -45,6 +50,10 @@ command -v Rscript >/dev/null 2>&1 || die "Rscript not found. Please install R f
 log "Rscript: $(Rscript --version | head -n1 || true)"
 if [[ "$OFFLINE" -eq 1 ]]; then
   log "Offline mode enabled — only local source tarballs will be used (no network)."
+else
+  if [[ "$PREFER_ONLINE" -eq 1 ]]; then
+    log "Prefer online sources — ignoring vendor/ tarballs when network is allowed."
+  fi
 fi
 
 # Ensure renv is installed
@@ -86,8 +95,9 @@ fi
 
 # Install CRAN deps (optparse, jsonlite, remotes, checkmate)
 if [[ "$OFFLINE" -eq 1 ]]; then
-  log "Offline mode: checking/installing CRAN deps: optparse, jsonlite, remotes, checkmate"
-  for PKG in optparse jsonlite remotes checkmate; do
+  log "Offline mode: checking/installing CRAN deps: backports, optparse, jsonlite, remotes, checkmate"
+  # Order matters: install dependencies first (e.g., backports needed by checkmate)
+  for PKG in backports optparse jsonlite remotes checkmate; do
     set +e
     Rscript -e "quit(status = as.integer(!requireNamespace('$PKG', quietly=TRUE)))" >/dev/null
     RC=$?
@@ -117,14 +127,16 @@ log "Ensuring 'bettermc' is installed (dependency of fslmer)"
 BETTERMC_VERSION="1.2.1"
 BETTERMC_URL="https://cran.r-project.org/src/contrib/Archive/bettermc/bettermc_${BETTERMC_VERSION}.tar.gz"
 BETTERMC_LOCAL="${BETTERMC_TARBALL:-}"
-if [[ -z "$BETTERMC_LOCAL" && -f "vendor/bettermc_${BETTERMC_VERSION}.tar.gz" ]]; then
-  BETTERMC_LOCAL="vendor/bettermc_${BETTERMC_VERSION}.tar.gz"
-fi
-# If a tarball exists in vendor/ with a different name/extension, pick the first match
-if [[ -z "$BETTERMC_LOCAL" ]]; then
-  FIRST_MATCH=$(ls vendor/bettermc*.tar* 2>/dev/null | head -n 1 || true)
-  if [[ -n "$FIRST_MATCH" ]]; then
-    BETTERMC_LOCAL="$FIRST_MATCH"
+if [[ "$OFFLINE" -eq 1 || "$PREFER_ONLINE" -ne 1 ]]; then
+  if [[ -z "$BETTERMC_LOCAL" && -f "vendor/bettermc_${BETTERMC_VERSION}.tar.gz" ]]; then
+    BETTERMC_LOCAL="vendor/bettermc_${BETTERMC_VERSION}.tar.gz"
+  fi
+  # If a tarball exists in vendor/ with a different name/extension, pick the first match
+  if [[ -z "$BETTERMC_LOCAL" ]]; then
+    FIRST_MATCH=$(ls vendor/bettermc*.tar* 2>/dev/null | head -n 1 || true)
+    if [[ -n "$FIRST_MATCH" ]]; then
+      BETTERMC_LOCAL="$FIRST_MATCH"
+    fi
   fi
 fi
 if [[ "$OFFLINE" -eq 1 ]]; then
@@ -198,7 +210,7 @@ fi
 log "Installing fslmer (Deep-MI/fslmer)"
 # Local tarball support and archive URL fallback
 FSLMER_LOCAL="${FSLMER_TARBALL:-}"
-if [[ -z "$FSLMER_LOCAL" ]]; then
+if [[ -z "$FSLMER_LOCAL" && ( "$OFFLINE" -eq 1 || "$PREFER_ONLINE" -ne 1 ) ]]; then
   FIRST_FSLMER=$(ls vendor/fslmer*.tar* 2>/dev/null | head -n 1 || true)
   if [[ -n "$FIRST_FSLMER" ]]; then FSLMER_LOCAL="$FIRST_FSLMER"; fi
 fi
