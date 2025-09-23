@@ -7,20 +7,28 @@ set -euo pipefail
 #
 # Usage:
 #   bash scripts/mamba_setup.sh [--prefix <dir>] [--env fastsurfer-r] [--r 4.5]
+#                                [--no-compilers] [--tmpdir /big/tmp] [--pkgs-dir /big/mamba-pkgs]
 #
 # Notes:
 # - No sudo required. Installs micromamba under ~/.local/micromamba by default.
+# - For low disk space: use --no-compilers to skip heavy toolchains; redirect caches with --pkgs-dir and temp with --tmpdir.
 # - Adds a small activation note at the end. This script does NOT modify your shell rc files.
 
 PREFIX="$HOME/.local/micromamba"
 ENV_NAME="fastsurfer-r"
 R_VERSION=""
+NO_COMPILERS=0
+USER_TMPDIR=""
+USER_PKGS_DIR=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prefix) PREFIX="${2:-}"; shift 2 ;;
     --env) ENV_NAME="${2:-}"; shift 2 ;;
     --r) R_VERSION="${2:-}"; shift 2 ;;
+    --no-compilers) NO_COMPILERS=1; shift ;;
+    --tmpdir) USER_TMPDIR="${2:-}"; shift 2 ;;
+    --pkgs-dir) USER_PKGS_DIR="${2:-}"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -82,6 +90,16 @@ if [[ ! -x "$MAMBA_BIN" ]]; then
 fi
 
 export MAMBA_ROOT_PREFIX="$PREFIX"
+if [[ -n "$USER_PKGS_DIR" ]]; then
+  mkdir -p "$USER_PKGS_DIR"
+  export MAMBA_PKGS_DIRS="$USER_PKGS_DIR"
+  echo "[mamba_setup] Using custom pkgs dir: $MAMBA_PKGS_DIRS"
+fi
+if [[ -n "$USER_TMPDIR" ]]; then
+  mkdir -p "$USER_TMPDIR"
+  export TMPDIR="$USER_TMPDIR"
+  echo "[mamba_setup] Using custom TMPDIR: $TMPDIR"
+fi
 "$MAMBA_BIN" shell hook -s bash >/dev/null 2>&1 || true
 
 # Prefer an environment.yml located alongside this script; fallback to env/environment.yml
@@ -125,6 +143,16 @@ if [[ -n "$R_VERSION" ]]; then
 else
   cp "$YAML" "$TMP_RAW_YAML"
 fi
+# Optionally remove heavy compiler toolchains to save disk space
+if [[ $NO_COMPILERS -eq 1 ]]; then
+  echo "[mamba_setup] --no-compilers enabled: filtering compiler packages from YAML"
+  awk '{
+    line=$0
+    if (line ~ /^\s*-\s*(c-compiler|cxx-compiler|fortran-compiler)\s*$/) next
+    print line
+  }' "$TMP_RAW_YAML" > "${TMP_RAW_YAML}.noc"
+  mv "${TMP_RAW_YAML}.noc" "$TMP_RAW_YAML"
+fi
 # Strip comments and empty lines safely, but keep section headers
 awk '{
   line=$0
@@ -149,6 +177,16 @@ if [[ $CREATE_RC -ne 0 ]]; then
   echo "[mamba_setup] Falling back to spec-based create by extracting dependencies..."
   # Extract dependency specs from sanitized YAML
   mapfile -t SPECS < <(awk '/^dependencies:/ {in_dep=1; next} /^\w/ {in_dep=0} in_dep && /^\s*-\s*/ { sub(/^\s*-\s*/, ""); if (length($0)>0) print $0 }' "$TMP_YAML")
+  if [[ $NO_COMPILERS -eq 1 ]]; then
+    NEW_SPECS=()
+    for s in "${SPECS[@]}"; do
+      case "$s" in
+        c-compiler|cxx-compiler|fortran-compiler) continue ;;
+        *) NEW_SPECS+=("$s") ;;
+      esac
+    done
+    SPECS=("${NEW_SPECS[@]}")
+  fi
   if [[ ${#SPECS[@]} -eq 0 ]]; then
     echo "[mamba_setup] No dependency specs could be parsed from $TMP_YAML" >&2
     exit 5
