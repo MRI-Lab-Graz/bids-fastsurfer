@@ -241,23 +241,23 @@ else
 fi
 
 echo "[mamba_setup] Installing R packages inside env: bettermc (robust), Deep-MI/fslmer"
-"$MAMBA_BIN" run -n "$ENV_NAME" Rscript -e 'if (!requireNamespace("remotes", quietly=TRUE)) install.packages("remotes", repos="https://cloud.r-project.org")'
+"$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e 'if (!requireNamespace("remotes", quietly=TRUE)) install.packages("remotes", repos="https://cloud.r-project.org")'
 
 # Try local tarball if provided, else CRAN archive version, else GitHub mirrors
 BETTERMC_TARBALL="${BETTERMC_TARBALL:-}"
 if [[ -n "$BETTERMC_TARBALL" && -f "$BETTERMC_TARBALL" ]]; then
   echo "[mamba_setup] Installing bettermc from local tarball: $BETTERMC_TARBALL"
-  "$MAMBA_BIN" run -n "$ENV_NAME" Rscript -e "install.packages('${BETTERMC_TARBALL//"'"/"'\''"}', repos=NULL, type='source')"
+  "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e "install.packages('${BETTERMC_TARBALL//"'"/"'\\''"}', repos=NULL, type='source')"
 else
   echo "[mamba_setup] Installing bettermc via remotes (archive/version or GitHub mirrors)"
   set +e
-  "$MAMBA_BIN" run -n "$ENV_NAME" Rscript -e 'ok <- TRUE; tryCatch({ if (!requireNamespace("bettermc", quietly=TRUE)) remotes::install_version("bettermc", version="1.2.1", repos="https://cran.r-project.org") }, error=function(e) ok<<-FALSE); quit(status = as.integer(!ok))'
+  "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e 'ok <- TRUE; tryCatch({ if (!requireNamespace("bettermc", quietly=TRUE)) remotes::install_version("bettermc", version="1.2.1", repos="https://cran.r-project.org") }, error=function(e) ok<<-FALSE); quit(status = as.integer(!ok))'
   RC=$?
   set -e
   if [[ $RC -ne 0 ]]; then
     echo "[mamba_setup] bettermc archived version failed; trying GitHub mirrors (cran/bettermc, gfkse/bettermc, akersting/bettermc)"
     set +e
-    "$MAMBA_BIN" run -n "$ENV_NAME" Rscript -e 'ok <- FALSE; for (repo in c("cran/bettermc","gfkse/bettermc","akersting/bettermc")) { try({ remotes::install_github(repo, quiet=TRUE); if (requireNamespace("bettermc", quietly=TRUE)) { ok <- TRUE; break } }, silent=TRUE) }; quit(status = as.integer(!ok))'
+    "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e 'ok <- FALSE; for (repo in c("cran/bettermc","gfkse/bettermc","akersting/bettermc")) { try({ remotes::install_github(repo, quiet=TRUE); if (requireNamespace("bettermc", quietly=TRUE)) { ok <- TRUE; break } }, silent=TRUE) }; quit(status = as.integer(!ok))'
     RC2=$?
     set -e
     if [[ $RC2 -ne 0 ]]; then
@@ -274,8 +274,9 @@ if [[ -n "$FSLMER_TARBALL" && -f "$FSLMER_TARBALL" ]]; then
   "$MAMBA_BIN" run -n "$ENV_NAME" Rscript -e "install.packages('${FSLMER_TARBALL//"'"/"'\''"}', repos=NULL, type='source')"
 else
   echo "[mamba_setup] Installing fslmer from GitHub Deep-MI/fslmer"
-  "$MAMBA_BIN" run -n "$ENV_NAME" Rscript -e 'remotes::install_github("Deep-MI/fslmer", upgrade="never", quiet=TRUE)'
+    "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e 'remotes::install_github("Deep-MI/fslmer", upgrade="never", quiet=TRUE)'
 fi
+"$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e 'remotes::install_github("Deep-MI/fslmer", upgrade="never", quiet=TRUE)'
 
 echo "[mamba_setup] Done. Activate with:"
 echo "  eval \"$($MAMBA_BIN shell hook -s bash)\""
