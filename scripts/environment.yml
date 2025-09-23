@@ -2,19 +2,16 @@ name: fastsurfer-r
 channels:
   - conda-forge
 dependencies:
-  # Pin R and core toolchain
   - r-base=4.5
   - make
-  - compilers
-  # R packages from conda-forge
+  - c-compiler
+  - cxx-compiler
+  - fortran-compiler
   - r-optparse
   - r-jsonlite
-  - r-mgcv       # for --engine gam
-  - r-remotes    # to install GitHub/CRAN pkgs not on conda
-  # Optional: try conda-forge bettermc if available; otherwise we'll install via R remotes later
+  - r-mgcv
+  - r-remotes
   - r-bh
   - r-matrix
   - r-rcpp
   - r-rcpparmadillo
-  # You can add: r-bettermc  (uncomment if available on conda-forge)
-  # - r-bettermc

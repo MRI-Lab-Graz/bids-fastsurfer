@@ -116,15 +116,26 @@ YML
   YAML="$SCRIPT_DIR/environment.yml"
 fi
 
-# Optionally override R version by editing a temp YAML on the fly
+# Optionally override R version; also sanitize YAML (strip comments and blank lines)
+TMP_RAW_YAML="${YAML}.raw.tmp"
 TMP_YAML="${YAML}.tmp"
 if [[ -n "$R_VERSION" ]]; then
   echo "[mamba_setup] Using R version r-base=${R_VERSION}"
-  # Replace any line starting with '  - r-base' with the chosen version
-  awk -v ver="$R_VERSION" '{ if ($0 ~ /^\s*-\s*r-base/) { print "  - r-base=" ver } else { print } }' "$YAML" > "$TMP_YAML"
+  awk -v ver="$R_VERSION" '{ if ($0 ~ /^\s*-\s*r-base/) { print "  - r-base=" ver } else { print } }' "$YAML" > "$TMP_RAW_YAML"
 else
-  cp "$YAML" "$TMP_YAML"
+  cp "$YAML" "$TMP_RAW_YAML"
 fi
+# Strip comments and empty lines safely, but keep section headers
+awk '{
+  line=$0
+  # Remove inline comments that start with # and have space before or after
+  sub(/\s*#.*$/, "", line)
+  # Trim trailing spaces
+  sub(/[ \t]+$/, "", line)
+  # Skip empty lines
+  if (line ~ /^\s*$/) next
+  print line
+}' "$TMP_RAW_YAML" > "$TMP_YAML"
 
 echo "[mamba_setup] Creating/updating env '$ENV_NAME' from $TMP_YAML"
 "$MAMBA_BIN" create -y -n "$ENV_NAME" -f "$TMP_YAML" || "$MAMBA_BIN" env update -n "$ENV_NAME" -f "$TMP_YAML" --prune
