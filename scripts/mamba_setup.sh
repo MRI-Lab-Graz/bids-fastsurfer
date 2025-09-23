@@ -279,7 +279,13 @@ fi
 "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e 'remotes::install_github("Deep-MI/fslmer", upgrade="never", quiet=TRUE)'
 
 echo "[mamba_setup] Done. Activate with:"
-echo "  eval \"$($MAMBA_BIN shell hook -s bash)\""
-echo "  micromamba activate $ENV_NAME"
-echo "Then run:"
+# Persist activation info for convenience
+ENV_RECORD="$SCRIPT_DIR/.mamba_env"
+{
+  echo "MAMBA_ROOT_PREFIX=\"$MAMBA_ROOT_PREFIX\""
+  echo "ENV_NAME=\"$ENV_NAME\""
+} > "$ENV_RECORD"
+
+echo "  source scripts/mamba_activate.sh   # activates like Python venv"
+echo "Then run inside the env:"
 echo "  Rscript scripts/fslmer_univariate.R --config /abs/path/to/config.json"
