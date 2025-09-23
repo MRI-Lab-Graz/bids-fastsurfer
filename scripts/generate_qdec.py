@@ -28,6 +28,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import os
 import csv
 import re
 import sys
@@ -43,7 +44,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generate FreeSurfer longitudinal Qdec file")
     p.add_argument("--participants", required=True, type=Path, help="Path to BIDS participants.tsv")
     p.add_argument("--subjects-dir", required=True, type=Path, help="Path to FastSurfer/FreeSurfer subjects directory")
-    p.add_argument("--output", type=Path, default=Path("qdec.table.dat"), help="Output Qdec TSV file (default: qdec.table.dat)")
+    p.add_argument(
+        "--output",
+        type=Path,
+        default=Path("qdec.table.dat"),
+        help=(
+            "Output Qdec TSV file (default: qdec.table.dat). "
+            "If a directory path is provided, the file 'qdec.table.dat' will be created inside it."
+        ),
+    )
     p.add_argument("--participant-column", default="participant_id", help="Column name for participant id (default: participant_id)")
     p.add_argument("--session-column", default="session_id", help="Column name for session id if present (default: session_id)")
     p.add_argument(
@@ -433,8 +442,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     # set list limit globally for summary printing
     setattr(sys.modules[__name__], "_LIST_LIMIT", max(0, int(args.list_limit)))
 
-    write_qdec(args.output, header, rows)
-    print(f"Wrote Qdec file: {args.output}")
+    # Resolve --output: if a directory was provided, place default filename inside it
+    out_path = args.output
+    try:
+        if out_path.exists() and out_path.is_dir():
+            out_path = out_path / "qdec.table.dat"
+            print(f"[INFO] --output points to a directory; writing file to: {out_path}")
+        elif str(out_path).endswith(os.sep):
+            # Trailing slash suggests intent as directory even if it doesn't exist yet
+            out_path = out_path / "qdec.table.dat"
+            print(f"[INFO] --output looks like a directory; writing file to: {out_path}")
+    except Exception:
+        # If os-level checks fail, proceed and let write_qdec handle parent creation and raise meaningful errors
+        pass
+
+    write_qdec(out_path, header, rows)
+    print(f"Wrote Qdec file: {out_path}")
     # Optional consistency summary
     summarize_consistency(args.bids, args.subjects_dir, participants_rows, participant_col, session_col, timepoints)
     # Optional FastSurfer .long symlink verification/creation for FreeSurfer tools compatibility

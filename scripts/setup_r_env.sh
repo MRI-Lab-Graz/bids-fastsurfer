@@ -56,6 +56,14 @@ else
   fi
 fi
 
+# Ensure we have a writable user library and point R to it (for installing renv)
+if [[ -z "${R_LIBS_USER:-}" ]]; then
+  # Use a predictable user lib that won't require sudo
+  export R_LIBS_USER="$HOME/.local/R/renv-user-lib"
+fi
+mkdir -p "$R_LIBS_USER" || die "Failed to create user library at R_LIBS_USER='$R_LIBS_USER'"
+log "Using user R library: $R_LIBS_USER"
+
 # Ensure renv is installed
 log "Ensuring renv is installed..."
 if [[ "$OFFLINE" -eq 1 ]]; then
@@ -70,13 +78,13 @@ if [[ "$OFFLINE" -eq 1 ]]; then
     fi
     if [[ -n "$RENV_LOCAL" && -f "$RENV_LOCAL" ]]; then
       log "Installing renv from local tarball: $RENV_LOCAL"
-      Rscript -e "install.packages('$RENV_LOCAL', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1 || die "Failed to install renv from $RENV_LOCAL"
+      Rscript -e "install.packages('$RENV_LOCAL', repos=NULL, type='source', lib=Sys.getenv('R_LIBS_USER'))" >>"${LOG_FILE}" 2>&1 || die "Failed to install renv from $RENV_LOCAL"
     else
       die "Offline mode: renv not found and no local renv tarball provided (set RENV_TARBALL or place vendor/renv_*.tar.gz)."
     fi
   fi
 else
-  Rscript -e "if (!requireNamespace('renv', quietly=TRUE)) install.packages('renv', repos='${CRAN_MIRROR}')" >/dev/null
+  Rscript -e "if (!requireNamespace('renv', quietly=TRUE)) install.packages('renv', repos='${CRAN_MIRROR}', lib=Sys.getenv('R_LIBS_USER'))" >/dev/null
 fi
 
 # Initialize/activate project
