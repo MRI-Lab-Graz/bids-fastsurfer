@@ -9,6 +9,8 @@ set -euo pipefail
 #   bash scripts/mamba_setup.sh [--prefix <dir>] [--env fastsurfer-r] [--r 4.5]
 #                                [--no-compilers] [--tmpdir /big/tmp] [--pkgs-dir /big/mamba-pkgs]
 #                                [--skip-extras] [--bettermc-version 1.2.1]
+#                                [--yaml /abs/path/to/environment.yml]
+#                                [--print-yaml] [--print-specs] [--use-specs]
 #
 # Notes:
 # - No sudo required. Installs micromamba under ~/.local/micromamba by default.
@@ -24,6 +26,11 @@ USER_PKGS_DIR=""
 USER_PREFIX_SET=0
 SKIP_EXTRAS=0
 BETTERMC_VERSION="1.2.1"
+YAML_OVERRIDE=""
+PRINT_YAML=0
+PRINT_SPECS=0
+USE_SPECS=0
+STRICT_YAML=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -35,6 +42,11 @@ while [[ $# -gt 0 ]]; do
     --pkgs-dir) USER_PKGS_DIR="${2:-}"; shift 2 ;;
     --skip-extras) SKIP_EXTRAS=1; shift ;;
     --bettermc-version) BETTERMC_VERSION="${2:-}"; shift 2 ;;
+    --yaml) YAML_OVERRIDE="${2:-}"; shift 2 ;;
+    --print-yaml) PRINT_YAML=1; shift ;;
+    --print-specs) PRINT_SPECS=1; shift ;;
+    --use-specs) USE_SPECS=1; shift ;;
+    --strict-yaml) STRICT_YAML=1; shift ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -126,7 +138,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 YAML="$SCRIPT_DIR/environment.yml"
 FALLBACK_YAML="env/environment.yml"
 
-if [[ -f "$FALLBACK_YAML" && ! -f "$YAML" ]]; then
+# Allow explicit override
+if [[ -n "$YAML_OVERRIDE" ]]; then
+  if [[ ! -f "$YAML_OVERRIDE" ]]; then
+    echo "[mamba_setup] --yaml provided but file not found: $YAML_OVERRIDE" >&2
+    exit 2
+  fi
+  YAML="$YAML_OVERRIDE"
+elif [[ -f "$FALLBACK_YAML" && ! -f "$YAML" ]]; then
   echo "[mamba_setup] Using fallback $FALLBACK_YAML (no scripts/environment.yml found)."
   YAML="$FALLBACK_YAML"
 fi
@@ -155,52 +174,81 @@ YML
   YAML="$SCRIPT_DIR/environment.yml"
 fi
 
-# Optionally override R version; also sanitize YAML (strip comments and blank lines)
-TMP_RAW_YAML="${YAML}.raw.tmp"
-TMP_YAML="${YAML}.tmp"
-if [[ -n "$R_VERSION" ]]; then
-  echo "[mamba_setup] Using R version r-base=${R_VERSION}"
-  awk -v ver="$R_VERSION" '{ if ($0 ~ /^\s*-\s*r-base/) { print "  - r-base=" ver } else { print } }' "$YAML" > "$TMP_RAW_YAML"
+# Build effective YAML path
+STRICT_PASSTHRU=0
+if [[ $STRICT_YAML -eq 1 && -z "$R_VERSION" ]]; then
+  # Use the provided YAML as-is without sanitization
+  TMP_YAML="$YAML"
+  STRICT_PASSTHRU=1
 else
-  cp "$YAML" "$TMP_RAW_YAML"
-fi
-# Optionally remove heavy compiler toolchains to save disk space
-if [[ $NO_COMPILERS -eq 1 ]]; then
-  echo "[mamba_setup] --no-compilers enabled: filtering compiler packages from YAML"
+  # Optionally override R version; also sanitize YAML (strip comments and blank lines)
+  # Use temp files to avoid stale/partial repo files between runs
+  _TMPDIR_FOR_YAML="${USER_TMPDIR:-${TMPDIR:-/tmp}}"
+  mkdir -p "$_TMPDIR_FOR_YAML" 2>/dev/null || true
+  TMP_RAW_YAML="$(mktemp -t env_raw_XXXXXXXX.yml 2>/dev/null || mktemp "$_TMPDIR_FOR_YAML/env_raw_XXXXXXXX.yml")"
+  TMP_YAML="$(mktemp -t env_san_XXXXXXXX.yml 2>/dev/null || mktemp "$_TMPDIR_FOR_YAML/env_san_XXXXXXXX.yml")"
+  trap 'rm -f "$TMP_RAW_YAML" "$TMP_YAML" 2>/dev/null || true' EXIT
+  if [[ -n "$R_VERSION" ]]; then
+    echo "[mamba_setup] Using R version r-base=${R_VERSION}"
+    awk -v ver="$R_VERSION" '{ if ($0 ~ /^\s*-\s*r-base/) { print "  - r-base=" ver } else { print } }' "$YAML" > "$TMP_RAW_YAML"
+  else
+    cp "$YAML" "$TMP_RAW_YAML"
+  fi
+  # Optionally remove heavy compiler toolchains to save disk space
+  if [[ $NO_COMPILERS -eq 1 ]]; then
+    echo "[mamba_setup] --no-compilers enabled: filtering compiler packages from YAML"
+    awk '{
+      line=$0
+      if (line ~ /^\s*-\s*(c-compiler|cxx-compiler|fortran-compiler)\s*$/) next
+      print line
+    }' "$TMP_RAW_YAML" > "${TMP_RAW_YAML}.noc"
+    mv "${TMP_RAW_YAML}.noc" "$TMP_RAW_YAML"
+  fi
+  # Strip comments and empty lines safely, but keep section headers
   awk '{
     line=$0
-    if (line ~ /^\s*-\s*(c-compiler|cxx-compiler|fortran-compiler)\s*$/) next
+    sub(/\s*#.*$/, "", line)
+    sub(/[ \t]+$/, "", line)
+    if (line ~ /^\s*$/) next
     print line
-  }' "$TMP_RAW_YAML" > "${TMP_RAW_YAML}.noc"
-  mv "${TMP_RAW_YAML}.noc" "$TMP_RAW_YAML"
-fi
-# Strip comments and empty lines safely, but keep section headers
-awk '{
-  line=$0
-  # Remove inline comments that start with # and have space before or after
-  sub(/\s*#.*$/, "", line)
-  # Trim trailing spaces
-  sub(/[ \t]+$/, "", line)
-  # Skip empty lines
-  if (line ~ /^\s*$/) next
-  print line
-}' "$TMP_RAW_YAML" > "$TMP_YAML"
-
-# Ensure conda-forge channel exists in sanitized YAML (safety for edge sanitization cases)
-if ! grep -qE '^[[:space:]]*-[[:space:]]*conda-forge[[:space:]]*$' "$TMP_YAML"; then
-  echo "[mamba_setup] Adding missing conda-forge channel to YAML"
-  printf "channels:\n  - conda-forge\n%s" "$(cat "$TMP_YAML")" > "$TMP_YAML"
+  }' "$TMP_RAW_YAML" > "$TMP_YAML"
+  # Ensure conda-forge channel exists
+  if ! grep -qE '^[[:space:]]*-[[:space:]]*conda-forge[[:space:]]*$' "$TMP_YAML"; then
+    echo "[mamba_setup] Adding missing conda-forge channel to YAML"
+    printf "channels:\n  - conda-forge\n%s" "$(cat "$TMP_YAML")" > "$TMP_YAML"
+  fi
+  # Guard: dependencies block must exist
+  if ! grep -qE '^dependencies:' "$TMP_YAML"; then
+    echo "[mamba_setup] Error: YAML has no dependencies block: $YAML" >&2
+    exit 5
+  fi
 fi
 
-echo "[mamba_setup] Creating/updating env '$ENV_NAME' from $TMP_YAML"
-# Try creating from YAML first
-set +e
-"$MAMBA_BIN" create -y -n "$ENV_NAME" -f "$TMP_YAML"
-CREATE_RC=$?
-set -e
+# If user only wants to inspect the effective YAML/specs, print and exit
+if [[ $PRINT_YAML -eq 1 ]]; then
+  echo "[mamba_setup] Effective sanitized YAML ($TMP_YAML):"
+  cat "$TMP_YAML"
+  exit 0
+fi
+
+if [[ $USE_SPECS -eq 0 ]]; then
+  echo "[mamba_setup] Creating/updating env '$ENV_NAME' from $TMP_YAML"
+  # Try creating from YAML first
+  set +e
+  "$MAMBA_BIN" create -y -n "$ENV_NAME" -f "$TMP_YAML"
+  CREATE_RC=$?
+  set -e
+else
+  # Force spec-based path
+  CREATE_RC=1
+fi
 if [[ $CREATE_RC -ne 0 ]]; then
   echo "[mamba_setup] YAML-based create failed (rc=$CREATE_RC). Showing sanitized YAML (first 50 lines):"
   head -n 50 "$TMP_YAML" || true
+  if [[ $STRICT_YAML -eq 1 ]]; then
+    echo "[mamba_setup] STRICT YAML mode: not falling back to specs. Fix the YAML and retry." >&2
+    exit $CREATE_RC
+  fi
   echo "[mamba_setup] Falling back to spec-based create by extracting dependencies..."
   # Extract dependency specs from sanitized YAML
   mapfile -t SPECS < <(awk '/^dependencies:/ {in_dep=1; next} /^\w/ {in_dep=0} in_dep && /^\s*-\s*/ { sub(/^\s*-\s*/, ""); if (length($0)>0) print $0 }' "$TMP_YAML")
@@ -224,8 +272,8 @@ if [[ $CREATE_RC -ne 0 ]]; then
     if [[ $present -eq 0 ]]; then SPECS+=("$req"); fi
   done
   if [[ ${#SPECS[@]} -eq 0 ]]; then
-    echo "[mamba_setup] No dependency specs could be parsed from $TMP_YAML" >&2
-    exit 5
+    echo "[mamba_setup] No dependency specs parsed; synthesizing REQUIRED specs"
+    SPECS=(make r-optparse r-jsonlite r-mgcv r-remotes r-bh r-matrix r-rcpp r-rcpparmadillo)
   fi
   echo "[mamba_setup] Specs: ${SPECS[*]}"
   # Use explicit channel from YAML or default to conda-forge
@@ -250,6 +298,17 @@ if [[ $SKIP_EXTRAS -eq 1 ]]; then
 else
   echo "[mamba_setup] Installing R extras inside env: bettermc (robust), Deep-MI/fslmer"
   "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e 'if (!requireNamespace("remotes", quietly=TRUE)) install.packages("remotes", repos="https://cloud.r-project.org")'
+
+  # Ensure prerequisite CRAN libs are present via conda-forge when possible (binary installs)
+  echo "[mamba_setup] Ensuring base R deps via conda-forge: r-checkmate r-backports"
+  set +e
+  "$MAMBA_BIN" install -y -n "$ENV_NAME" -c conda-forge r-checkmate r-backports >/dev/null 2>&1
+  RC_CF_DEPS=$?
+  set -e
+  if [[ $RC_CF_DEPS -ne 0 ]]; then
+    echo "[mamba_setup] conda-forge install failed; falling back to install.packages for checkmate/backports"
+    "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e 'if (!requireNamespace("backports", quietly=TRUE)) install.packages("backports", repos="https://cloud.r-project.org"); if (!requireNamespace("checkmate", quietly=TRUE)) install.packages("checkmate", repos="https://cloud.r-project.org")'
+  fi
 
   # Helper to download bettermc tarball to vendor dir
   VENDOR_DIR="$SCRIPT_DIR/vendor"; mkdir -p "$VENDOR_DIR"
@@ -306,21 +365,31 @@ else
     fi
   fi
 
-  # fslmer: try local tarball first, else GitHub
-  FSLMER_TARBALL="${FSLMER_TARBALL:-}"
-  if [[ -n "$FSLMER_TARBALL" && -f "$FSLMER_TARBALL" ]]; then
-    echo "[mamba_setup] Installing fslmer from local tarball: $FSLMER_TARBALL"
-    set +e
-    "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e "install.packages('${FSLMER_TARBALL//"'"/"'\\''"}', repos=NULL, type='source')"
-    set -e
+  # Verify bettermc is available before attempting fslmer (hard dependency)
+  set +e
+  "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e 'quit(status = as.integer(!requireNamespace("bettermc", quietly=TRUE)))'
+  BM_OK=$?
+  set -e
+  if [[ $BM_OK -ne 0 ]]; then
+    echo "[mamba_setup] Error: 'bettermc' is not installed; fslmer depends on it. Skipping fslmer installation."
+    echo "[mamba_setup] Hint: ensure checkmate/backports are present, provide BETTERMC_TARBALL, or allow internet for CRAN installs."
   else
-    echo "[mamba_setup] Installing fslmer from GitHub Deep-MI/fslmer"
-    set +e
-    "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e 'remotes::install_github("Deep-MI/fslmer", upgrade="never", quiet=TRUE)'
-    FSL_RC=$?
-    set -e
-    if [[ $FSL_RC -ne 0 ]]; then
-      echo "[mamba_setup] Warning: fslmer installation failed. The R helper can still run with --engine glm/gam."
+    # fslmer: try local tarball first, else GitHub
+    FSLMER_TARBALL="${FSLMER_TARBALL:-}"
+    if [[ -n "$FSLMER_TARBALL" && -f "$FSLMER_TARBALL" ]]; then
+      echo "[mamba_setup] Installing fslmer from local tarball: $FSLMER_TARBALL"
+      set +e
+      "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e "install.packages('${FSLMER_TARBALL//"'"/"'\\''"}', repos=NULL, type='source')"
+      set -e
+    else
+      echo "[mamba_setup] Installing fslmer from GitHub Deep-MI/fslmer"
+      set +e
+      "$MAMBA_BIN" run -n "$ENV_NAME" Rscript --vanilla -e 'remotes::install_github("Deep-MI/fslmer", upgrade="never", quiet=TRUE)'
+      FSL_RC=$?
+      set -e
+      if [[ $FSL_RC -ne 0 ]]; then
+        echo "[mamba_setup] Warning: fslmer installation failed. The R helper can still run with --engine glm/gam."
+      fi
     fi
   fi
 fi

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # run_fslmer_univariate.sh
-# Purpose: Run scripts/fslmer_univariate.R within the project's renv so that
-# required packages (optparse, jsonlite, fslmer, mgcv, etc.) are available.
+# Purpose: Run scripts/fslmer_univariate.R inside the project's micromamba env if present,
+# otherwise fall back to system Rscript.
 #
 # Usage:
 #   bash scripts/run_fslmer_univariate.sh --config /path/to/config.json [other args]
@@ -12,12 +12,21 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-command -v Rscript >/dev/null 2>&1 || { echo "Rscript not found in PATH" >&2; exit 127; }
+# Try micromamba first
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_RECORD="$SCRIPT_DIR/.mamba_env"
+if [[ -f "$ENV_RECORD" ]]; then
+  # shellcheck disable=SC1090
+  source "$ENV_RECORD"
+fi
+ENV_NAME="${ENV_NAME:-fastsurfer-r}"
+MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$HOME/.local/micromamba}"
+MAMBA_BIN="$MAMBA_ROOT_PREFIX/bin/micromamba"
 
-if [[ ! -f "renv/activate.R" ]]; then
-  echo "renv not initialized in this project (missing renv/activate.R). Run: bash scripts/setup_r_env.sh" >&2
-  exit 1
+if [[ -x "$MAMBA_BIN" && -d "$MAMBA_ROOT_PREFIX/envs/$ENV_NAME" ]]; then
+  exec "$MAMBA_BIN" run -p "$MAMBA_ROOT_PREFIX/envs/$ENV_NAME" Rscript scripts/fslmer_univariate.R "$@"
 fi
 
-# Run the analysis script inside renv, forwarding all CLI args
-Rscript -e 'args <- commandArgs(trailingOnly=TRUE); renv::run("scripts/fslmer_univariate.R", args=args)' -- "$@"
+# Fallback: system Rscript
+command -v Rscript >/dev/null 2>&1 || { echo "Rscript not found in PATH and micromamba env unavailable" >&2; exit 127; }
+exec Rscript scripts/fslmer_univariate.R "$@"

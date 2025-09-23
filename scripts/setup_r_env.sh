@@ -20,114 +20,13 @@ set -euo pipefail
 # Notes:
 # - Requires Rscript in PATH. On macOS, you may need Xcode CLT: `xcode-select --install`.
 # - The script should be run from repo root.
+#!/usr/bin/env bash
+# This script is deprecated and kept only as a stub for backward compatibility.
+# Please use the micromamba-based installer instead:
+#   bash scripts/install.sh
 
-QUIET=0
-SNAPSHOT=1
-CRAN_MIRROR="https://cloud.r-project.org"
-LOG_FILE="setup_r_env.log"
-OFFLINE=${OFFLINE:-0}
-PREFER_ONLINE=${PREFER_ONLINE:-0}
-
-die() { echo "[setup_r_env] $*" >&2; exit 1; }
-log() { if [[ $QUIET -eq 0 ]]; then echo "[setup_r_env] $*"; fi }
-
-# Start fresh log for this run to avoid confusion with previous attempts
-echo "[setup_r_env] New run $(date)" >"${LOG_FILE}"
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --no-snapshot) SNAPSHOT=0; shift ;;
-    --cran-mirror) CRAN_MIRROR="${2:-}"; shift 2 ;;
-    --offline) OFFLINE=1; shift ;;
-    --prefer-online) PREFER_ONLINE=1; shift ;;
-    --quiet) QUIET=1; shift ;;
-    *) die "Unknown option: $1" ;;
-  esac
-done
-
-command -v Rscript >/dev/null 2>&1 || die "Rscript not found. Please install R first."
-
-log "Rscript: $(Rscript --version | head -n1 || true)"
-if [[ "$OFFLINE" -eq 1 ]]; then
-  log "Offline mode enabled — only local source tarballs will be used (no network)."
-else
-  if [[ "$PREFER_ONLINE" -eq 1 ]]; then
-    log "Prefer online sources — ignoring vendor/ tarballs when network is allowed."
-  fi
-fi
-
-# Ensure we have a writable user library and point R to it (for installing renv)
-if [[ -z "${R_LIBS_USER:-}" ]]; then
-  # Use a predictable user lib that won't require sudo
-  export R_LIBS_USER="$HOME/.local/R/renv-user-lib"
-fi
-mkdir -p "$R_LIBS_USER" || die "Failed to create user library at R_LIBS_USER='$R_LIBS_USER'"
-log "Using user R library: $R_LIBS_USER"
-
-# Ensure renv is installed
-log "Ensuring renv is installed..."
-if [[ "$OFFLINE" -eq 1 ]]; then
-  set +e
-  Rscript -e "quit(status = as.integer(!requireNamespace('renv', quietly=TRUE)))" >/dev/null
-  RC=$?
-  set -e
-  if [[ $RC -ne 0 ]]; then
-    RENV_LOCAL="${RENV_TARBALL:-}"
-    if [[ -z "$RENV_LOCAL" ]]; then
-      RENV_LOCAL=$(ls vendor/renv*.tar* 2>/dev/null | head -n1 || true)
-    fi
-    if [[ -n "$RENV_LOCAL" && -f "$RENV_LOCAL" ]]; then
-      log "Installing renv from local tarball: $RENV_LOCAL"
-      Rscript -e "install.packages('$RENV_LOCAL', repos=NULL, type='source', lib=Sys.getenv('R_LIBS_USER'))" >>"${LOG_FILE}" 2>&1 || die "Failed to install renv from $RENV_LOCAL"
-    else
-      die "Offline mode: renv not found and no local renv tarball provided (set RENV_TARBALL or place vendor/renv_*.tar.gz)."
-    fi
-  fi
-else
-  Rscript -e "if (!requireNamespace('renv', quietly=TRUE)) install.packages('renv', repos='${CRAN_MIRROR}', lib=Sys.getenv('R_LIBS_USER'))" >/dev/null
-fi
-
-# Initialize/activate project
-if [[ -f "renv.lock" ]]; then
-  if [[ "$OFFLINE" -eq 1 ]]; then
-    log "renv.lock found — activating (skip restore in offline mode)"
-    Rscript -e "renv::activate()" >/dev/null
-  else
-    log "renv.lock found — activating and restoring"
-    Rscript -e "renv::activate(); renv::restore(prompt=FALSE)" >/dev/null
-  fi
-else
-  log "No renv.lock — initializing new renv project"
-  Rscript -e "renv::init(bare=TRUE)" >/dev/null
-fi
-
-# Install CRAN deps (optparse, jsonlite, remotes, checkmate)
-if [[ "$OFFLINE" -eq 1 ]]; then
-  log "Offline mode: checking/installing CRAN deps: backports, optparse, jsonlite, remotes, checkmate"
-  # Order matters: install dependencies first (e.g., backports needed by checkmate)
-  for PKG in backports optparse jsonlite remotes checkmate; do
-    set +e
-    Rscript -e "quit(status = as.integer(!requireNamespace('$PKG', quietly=TRUE)))" >/dev/null
-    RC=$?
-    set -e
-    if [[ $RC -ne 0 ]]; then
-      CANDIDATE="$(ls vendor/${PKG}_*.tar* 2>/dev/null | head -n1 || true)"
-      if [[ -z "$CANDIDATE" ]]; then die "Offline mode: missing $PKG and no vendor/${PKG}_*.tar.gz found. Please provide local tarball (e.g., vendor/${PKG}_<version>.tar.gz)."; fi
-      log "Installing $PKG from local tarball: $CANDIDATE"
-      Rscript -e "install.packages('$CANDIDATE', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1 || die "Failed to install $PKG from $CANDIDATE"
-    fi
-  done
-  # Optional: mgcv for GAM runs
-  set +e
-  Rscript -e "quit(status = as.integer(!requireNamespace('mgcv', quietly=TRUE)))" >/dev/null
-  MGCV_RC=$?
-  set -e
-  if [[ $MGCV_RC -ne 0 ]]; then
-    MGCV_TARBALL="$(ls vendor/mgcv_*.tar* 2>/dev/null | head -n1 || true)"
-    if [[ -n "$MGCV_TARBALL" ]]; then
-      log "Installing mgcv (required for GAM runs) from local tarball: $MGCV_TARBALL"
-      Rscript -e "install.packages('$MGCV_TARBALL', repos=NULL, type='source')" >>"${LOG_FILE}" 2>&1 || log "Warning: failed to install mgcv from $MGCV_TARBALL; GAM runs will not work until mgcv is available."
-    else
+echo "[setup_r_env.sh] Deprecated. Use: bash scripts/install.sh" >&2
+exit 1
       log "Offline mode: mgcv not installed (no vendor/mgcv_*.tar.gz found). If you plan to use --engine gam, provide an mgcv tarball or run setup online."
     fi
   fi

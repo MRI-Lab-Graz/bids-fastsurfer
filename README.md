@@ -30,8 +30,9 @@ jq --version
 - `bids_long_fastsurfer.sh` — Longitudinal wrapper
 - `fastsurfer_options.json` — Example configuration file with cross/long sections
 - `license.txt` — Placeholder filename referenced by scripts (replace with your actual FreeSurfer license file path in the config)
+- `scripts/install.sh` — One-command installer for the R analysis environment (micromamba)
 - `scripts/generate_qdec.py` — Build Qdec from BIDS participants.tsv and subjects_dir; optional .long symlink helper
-- `scripts/fslmer_univariate.R` — Flexible univariate LME helper using the fslmer R package
+- `scripts/fslmer_univariate.R` — Flexible univariate LME/GAM/GLM helper (fslmer/mgcv/stats)
 - `configs/fslmer_univariate.example.json` — Example JSON config for the R script
 
 ## Example BIDS datasets
@@ -88,39 +89,42 @@ Both scripts read a single JSON file with top-level container paths and per-pipe
 
 ```json
 {
-	"fs_license": "/abs/path/to/license.txt",
-	"sif_file": "/abs/path/to/fastsurfer-gpu.sif",
-	"cross": {
-		"vox_size": "min",
-		"seg_only": true,
-		"3T": true,
-		"reg_mode": "coreg",
-		"qc_snap": false
-		// ... more cross-sectional options (see below)
-	},
-	"long": {
-		"parallel": null,
-		"parallel_seg": null,
-		"parallel_surf": null,
-		"reg_mode": "coreg",
-		"3T": true,
-		"qc_snap": false
-		// ... more longitudinal options (see below)
-	}
+  "fs_license": "/abs/path/to/license.txt",
+  "sif_file": "/abs/path/to/fastsurfer-gpu.sif",
+  "cross": {
+    "vox_size": "min",
+    "seg_only": true,
+    "3T": true,
+    "reg_mode": "coreg",
+    "qc_snap": false
+    // ... more cross-sectional options (see below)
+  },
+  "long": {
+    "parallel": null,
+    "parallel_seg": null,
+    "parallel_surf": null,
+    "reg_mode": "coreg",
+    "3T": true,
+    "qc_snap": false
+    // ... more longitudinal options (see below)
+  }
 }
 ```
 
 - Notes:
+
 - Top-level keys:
-	- `fs_license` — Absolute path to your FreeSurfer license file.
-	- `sif_file` — Absolute path to the FastSurfer GPU Singularity image.
+  - `fs_license` — Absolute path to your FreeSurfer license file.
+  - `sif_file` — Absolute path to the FastSurfer GPU Singularity image.
+
 - The `cross` and `long` sections mirror FastSurfer flags. Values are translated as follows:
-	- Boolean `true` → adds `--flag`
-	- Boolean `false` or `null` → omitted
-	- Strings/numbers → adds `--flag value`
+  - Boolean `true` → adds `--flag`
+  - Boolean `false` or `null` → omitted
+  - Strings/numbers → adds `--flag value`
+
 - Unknown key behavior differs:
-	- Longitudinal (`long`): unknown keys are ignored; run with `--debug` to see warnings.
-	- Cross-sectional (`cross`): keys are forwarded as flags to FastSurfer; unknown ones may cause errors. Keep the `cross` section minimal and only include supported flags.
+  - Longitudinal (`long`): unknown keys are ignored; run with `--debug` to see warnings.
+  - Cross-sectional (`cross`): keys are forwarded as flags to FastSurfer; unknown ones may cause errors. Keep the `cross` section minimal and only include supported flags.
 
 Common option keys you can use in `cross`/`long`:
 - Parallelization and threading: `parallel`, `parallel_seg`, `parallel_surf`, `threads`, `threads_seg`, `threads_surf`, `batch`
@@ -347,30 +351,26 @@ Use the resulting `qdec.table.dat` with FreeSurfer longitudinal statistics and t
 - FreeSurfer Longitudinal: <https://surfer.nmr.mgh.harvard.edu/fswiki/LongitudinalStatistics>
 - fslmer: <https://github.com/Deep-MI/fslmer>
 
-## Univariate LME with fslmer (R) 🎓
+## Univariate stats in R (fslmer / GAM / GLM) 🎓
 
-A flexible R helper is included to run univariate mixed-effects models using the `fslmer` package on aseg/aparc tables.
+A flexible R helper is included to run univariate models on aseg/aparc tables using:
+- Mixed-effects via `fslmer`
+- Generalized Additive Models via `mgcv`
+- Generalized Linear Models via base `stats`
 
 Script: `scripts/fslmer_univariate.R`
-
-Install `fslmer` in R (once):
-
-```r
-# install.packages("devtools")
-devtools::install_github("Deep-MI/fslmer", build_vignettes = TRUE)
-```
 
 Basic usage:
 
 ```zsh
 Rscript scripts/fslmer_univariate.R \
-	--qdec /path/to/qdec.table.dat \
-	--aseg /path/to/aseg.long.table \
-	--roi Left.Hippocampus \
-	--formula "~ tp*group" \
-	--zcols 1,2 \
-	--contrast 0,0,0,1 \
-	--outdir results_univar --save-merged
+  --qdec /path/to/qdec.table.dat \
+  --aseg /path/to/aseg.long.table \
+  --roi Left.Hippocampus \
+  --formula "~ tp*group" \
+  --zcols 1,2 \
+  --contrast 0,0,0,1 \
+  --outdir results_univar --save-merged
 ```
 
 Flags:
@@ -406,61 +406,44 @@ Additional flag:
 
 - `--config`: Path to a JSON file with the same keys as the CLI flags. Useful to version-control analyses.
 
-R environment with renv:
+## Installation (one command)
 
-- To capture exact package versions, initialize renv in the repo root, install dependencies, then snapshot:
-  - Initialize: `renv::init()`
-  - Install: `install.packages(c("optparse","jsonlite","devtools"))`
-  - fslmer: `devtools::install_github("Deep-MI/fslmer", build_vignettes = TRUE)`
-  - Snapshot: `renv::snapshot()`
-- On another machine (or later), restore with: `renv::restore()`
-
-Quick setup script (install/activate/verify):
-
-- You can bootstrap the R environment from the repo root with:
+Set up everything needed for the R analysis helper with micromamba:
 
 ```zsh
-bash scripts/setup_r_env.sh
+bash scripts/install.sh
 ```
 
-- What it does:
-  - Ensures Rscript and renv are available
-  - Initializes or activates the renv project and restores if a lockfile exists
-	- Installs CRAN packages: optparse, jsonlite (and remotes)
-	- Installs fslmer (prefers GitHub via pak; see offline mode below)
-	- Snapshots renv.lock and prints a brief verification
-	- Flags: `--no-snapshot`, `--cran-mirror <url>`, `--offline`, `--quiet`
+What it does:
+- Bootstraps micromamba under `~/.local/micromamba` if missing
+- Creates/updates an env (default `fastsurfer-r`) from `scripts/environment.yml` in strict mode
+- Installs/validates R packages in the right order (checkmate/backports → bettermc → fslmer; plus mgcv, optparse, jsonlite)
 
-Offline installs (no network):
-
-If your server has no internet access, provide local source tarballs and enable offline mode. The script will only use local files and will not attempt any network access.
+Activate, verify, and use:
 
 ```zsh
-# Minimal example: install bettermc from a local tarball and set up fslmer from a local tarball
-BETTERMC_TARBALL=/abs/path/to/vendor/bettermc_1.2.1.tar.gz \
-FSLMER_TARBALL=/abs/path/to/vendor/fslmer_0.2.0.tar.gz \
-OFFLINE=1 bash scripts/setup_r_env.sh --offline
+# Activate the env
+source scripts/mamba_activate.sh
+
+# Verify packages
+Rscript -e 'pkgs <- c("optparse","jsonlite","mgcv","checkmate","bettermc","fslmer"); print(sapply(pkgs, requireNamespace, quietly=TRUE))'
+
+# See helper usage
+Rscript scripts/fslmer_univariate.R --help
+
+# Deactivate later
+source scripts/mamba_deactivate.sh
 ```
 
-Search paths and environment variables for local tarballs:
+Advanced install options:
 
-- renv: set `RENV_TARBALL=/abs/path/to/renv_X.Y.Z.tar.gz` or place under `vendor/`
-- CRAN deps (optparse, jsonlite, remotes, checkmate): place tarballs under `vendor/` as `optparse_*.tar.gz`, `checkmate_*.tar.gz`, etc.
-- bettermc: set `BETTERMC_TARBALL=/abs/path/to/bettermc_1.2.1.tar.gz` or place under `vendor/`
-- fslmer: set `FSLMER_TARBALL=/abs/path/to/fslmer_*.tar.gz` or place under `vendor/`
+```zsh
+# Use spec-based installation (alternative to YAML), skip compilers on macOS
+bash scripts/install.sh --use-specs --no-compilers
 
-Online fallbacks (when not using `--offline`):
-
-- For bettermc, the installer will first try the CRAN archive tarball; if that fails it falls back to GitHub:
-  - `gfkse/bettermc` (default upstream)
-  - `akersting/bettermc` (alternate upstream)
-  - `cran/bettermc` (mirror)
-- You can pin a tag with `BETTERMC_REF` (e.g., `BETTERMC_REF=v1.2.1`) or override the repo via `BETTERMC_GITHUB=owner/repo`.
-
-Notes:
-
-- In offline mode, `renv::restore()` is skipped; only `renv::activate()` is run. Snapshotting still works.
-- When online, the script prefers `pak` for faster installs and falls back to `install.packages`/`remotes` when needed.
+# Choose a custom env name and R version
+bash scripts/install.sh --env my-fast-env --r 4.4
+```
 
 ### Using FreeSurfer tools with FastSurfer longitudinal outputs
 

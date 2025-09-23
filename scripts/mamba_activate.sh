@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 # mamba_activate.sh
 # Purpose: Activate the fastsurfer-r micromamba environment like Python venv.
@@ -11,7 +10,7 @@ if [[ -f "$ENV_RECORD" ]]; then
   source "$ENV_RECORD"
 fi
 
-# Fallbacks if .mamba_env not present
+# Fallbacks if .mamba_env not present or invalid
 : "${MAMBA_ROOT_PREFIX:=${HOME}/.local/micromamba}"
 : "${ENV_NAME:=fastsurfer-r}"
 
@@ -19,6 +18,11 @@ fi
 export MAMBA_ROOT_PREFIX
 
 MAMBA_BIN="$MAMBA_ROOT_PREFIX/bin/micromamba"
+# If recorded root is stale, fall back to default HOME path
+if [[ ! -x "$MAMBA_BIN" && "$MAMBA_ROOT_PREFIX" != "$HOME/.local/micromamba" ]]; then
+  MAMBA_ROOT_PREFIX="$HOME/.local/micromamba"
+  MAMBA_BIN="$MAMBA_ROOT_PREFIX/bin/micromamba"
+fi
 CURRENT_SHELL="bash"
 if [[ -n "${ZSH_VERSION:-}" ]] || [[ "${SHELL:-}" == *"zsh"* ]]; then
   CURRENT_SHELL="zsh"
@@ -34,7 +38,12 @@ fi
 
 # Activate by env name using the recorded root (hook points to the right micromamba)
 ENV_PREFIX="$MAMBA_ROOT_PREFIX/envs/$ENV_NAME"
-"$MAMBA_BIN" activate "$ENV_NAME" >/dev/null
+# Use the shell-integrated activation so environment variables are applied to current shell
+if ! micromamba activate "$ENV_NAME" >/dev/null 2>&1; then
+  echo "Failed to activate micromamba env: $ENV_NAME" >&2
+  echo "Try running: eval \"$($MAMBA_BIN shell hook -s $CURRENT_SHELL)\" && micromamba activate $ENV_NAME" >&2
+  return 1 2>/dev/null || exit 1
+fi
 RS_BIN="$(command -v Rscript || true)"
 ENV_BIN_DIR="$ENV_PREFIX/bin"
 if [[ -z "$RS_BIN" || "$RS_BIN" != "$ENV_BIN_DIR/Rscript" ]]; then
@@ -50,20 +59,34 @@ export R_PROFILE_USER=
 export R_PROFILE=
 
 # Provide a convenience wrapper so plain 'Rscript' runs with --vanilla for scripts
-# but does not interfere with informational flags like --help/--version
-Rscript() {
-  if [[ $# -eq 0 ]]; then
-    command Rscript "$@"
-    return $?
-  fi
-  case "$1" in
-    --help|--version|-h|-v)
-      command Rscript "$@" ;;
-    *)
-      command Rscript --vanilla "$@" ;;
-  esac
-}
-# 'export -f' is bash-only; safe to skip in zsh
+# but does not interfere with informational flags like --help/--version.
+# Use a simple alias when possible to avoid function export issues across shells.
 if [[ -n "${BASH_VERSION:-}" ]]; then
+  Rscript() {
+    if [[ $# -eq 0 ]]; then
+      command Rscript "$@"
+      return $?
+    fi
+    case "$1" in
+      --help|--version|-h|-v)
+        command Rscript "$@" ;;
+      *)
+        command Rscript --vanilla "$@" ;;
+    esac
+  }
   export -f Rscript 2>/dev/null || true
+elif [[ -n "${ZSH_VERSION:-}" ]]; then
+  # zsh: define function (no export needed) to avoid alias side-effects in tools like `which`
+  Rscript() {
+    if [[ $# -eq 0 ]]; then
+      command Rscript "$@"
+      return $?
+    fi
+    case "$1" in
+      --help|--version|-h|-v)
+        command Rscript "$@" ;;
+      *)
+        command Rscript --vanilla "$@" ;;
+    esac
+  }
 fi
