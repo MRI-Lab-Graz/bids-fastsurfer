@@ -1,3 +1,2 @@
-# Optional override for micromamba root. Leave unset to use default: "$HOME/.local/micromamba"
-# MAMBA_ROOT_PREFIX="/abs/custom/micromamba/root"
+MAMBA_ROOT_PREFIX="/data/local/tmp_big/micromamba-root"
 ENV_NAME="fastsurfer-r"

@@ -17,7 +17,7 @@ set -euo pipefail
 # - For low disk space: use --no-compilers to skip heavy toolchains; redirect caches with --pkgs-dir and temp with --tmpdir.
 # - Adds a small activation note at the end. This script does NOT modify your shell rc files.
 
-PREFIX="$HOME/.local/micromamba"
+PREFIX="${MAMBA_ROOT_PREFIX:-$HOME/.local/micromamba}"
 ENV_NAME="fastsurfer-r"
 R_VERSION=""
 NO_COMPILERS=0
