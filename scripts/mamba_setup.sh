@@ -92,8 +92,9 @@ fi
 export MAMBA_ROOT_PREFIX="$PREFIX"
 if [[ -n "$USER_PKGS_DIR" ]]; then
   mkdir -p "$USER_PKGS_DIR"
+  export CONDA_PKGS_DIRS="$USER_PKGS_DIR"
   export MAMBA_PKGS_DIRS="$USER_PKGS_DIR"
-  echo "[mamba_setup] Using custom pkgs dir: $MAMBA_PKGS_DIRS"
+  echo "[mamba_setup] Using custom pkgs dir: $USER_PKGS_DIR"
 fi
 if [[ -n "$USER_TMPDIR" ]]; then
   mkdir -p "$USER_TMPDIR"
