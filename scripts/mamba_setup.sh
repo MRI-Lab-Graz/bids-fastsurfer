@@ -109,6 +109,11 @@ if [[ -n "$USER_TMPDIR" ]]; then
   echo "[mamba_setup] Using custom TMPDIR: $TMPDIR"
 fi
 "$MAMBA_BIN" shell hook -s bash >/dev/null 2>&1 || true
+echo "[mamba_setup] Effective paths:" 
+echo "  MAMBA_ROOT_PREFIX=$MAMBA_ROOT_PREFIX"
+echo "  CONDA_PKGS_DIRS=${CONDA_PKGS_DIRS:-}"
+echo "  MAMBA_PKGS_DIRS=${MAMBA_PKGS_DIRS:-}"
+echo "  TMPDIR=${TMPDIR:-}"
 
 # Prefer an environment.yml located alongside this script; fallback to env/environment.yml
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -201,6 +206,15 @@ if [[ $CREATE_RC -ne 0 ]]; then
     done
     SPECS=("${NEW_SPECS[@]}")
   fi
+  # Ensure required R packages are present even if YAML is minimal
+  REQUIRED=(make r-optparse r-jsonlite r-mgcv r-remotes r-bh r-matrix r-rcpp r-rcpparmadillo)
+  for req in "${REQUIRED[@]}"; do
+    present=0
+    for s in "${SPECS[@]}"; do
+      if [[ "$s" == "$req"* ]]; then present=1; break; fi
+    done
+    if [[ $present -eq 0 ]]; then SPECS+=("$req"); fi
+  done
   if [[ ${#SPECS[@]} -eq 0 ]]; then
     echo "[mamba_setup] No dependency specs could be parsed from $TMP_YAML" >&2
     exit 5
