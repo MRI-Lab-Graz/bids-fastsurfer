@@ -32,3 +32,16 @@ fi
 
 micromamba activate "$ENV_NAME"
 echo "Activated micromamba env: $ENV_NAME"
+
+# Avoid renv autoloader and user/site profiles interfering in this env
+export RENV_CONFIG_AUTOLOADER_ENABLED=false
+# Disable reading of user and site profiles; users can still run R without wrapper if needed
+export R_PROFILE_USER=
+export R_PROFILE=
+
+# Provide a convenience wrapper so plain 'Rscript' runs with --vanilla in this shell
+# This limits surprises from project or user profiles trying to source renv/activate.R
+Rscript() {
+  command Rscript --vanilla "$@"
+}
+export -f Rscript 2>/dev/null || true
