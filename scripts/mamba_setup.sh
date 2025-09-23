@@ -126,8 +126,8 @@ else
   cp "$YAML" "$TMP_YAML"
 fi
 
-echo "[mamba_setup] Creating/updating env from $TMP_YAML"
-"$MAMBA_BIN" create -y -f "$TMP_YAML" || "$MAMBA_BIN" env update -f "$TMP_YAML"
+echo "[mamba_setup] Creating/updating env '$ENV_NAME' from $TMP_YAML"
+"$MAMBA_BIN" create -y -n "$ENV_NAME" -f "$TMP_YAML" || "$MAMBA_BIN" env update -n "$ENV_NAME" -f "$TMP_YAML" --prune
 
 echo "[mamba_setup] Installing R packages inside env: bettermc (robust), Deep-MI/fslmer"
 "$MAMBA_BIN" run -n "$ENV_NAME" Rscript -e 'if (!requireNamespace("remotes", quietly=TRUE)) install.packages("remotes", repos="https://cloud.r-project.org")'
