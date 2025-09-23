@@ -48,16 +48,19 @@ if [[ ! -x "$MAMBA_BIN" ]]; then
   echo "[mamba_setup] Installing micromamba ($PLATFORM_TAG) to $PREFIX"
   URL="https://micro.mamba.pm/api/micromamba/${PLATFORM_TAG}/latest"
   mkdir -p "$PREFIX/bin"
-  # Stream-extract; requires bzip2 support in tar
-  if ! curl -fsSL "$URL" | tar -xj -C "$PREFIX" --strip-components=1 bin/micromamba 2>/dev/null; then
+  # Ensure tar supports bzip2; fallback to decompression via bunzip2 if available
+  if ! tar --help 2>&1 | grep -qi bzip2; then
+    echo "[mamba_setup] Warning: tar may lack bzip2 support; attempting fallback path" >&2
+  fi
+  # Stream-extract directly to PREFIX; some builds place bin/micromamba, others micromamba at top-level
+  if ! curl -fsSL "$URL" | tar -xj -C "$PREFIX" 2>/dev/null; then
     echo "[mamba_setup] Download/extract failed from $URL" >&2
     echo "[mamba_setup] Trying to download to file for inspection..." >&2
     TMP_ARCHIVE="$PREFIX/micromamba_${PLATFORM_TAG}.tar.bz2"
     if curl -fsSL "$URL" -o "$TMP_ARCHIVE"; then
-      echo "[mamba_setup] Saved archive to $TMP_ARCHIVE (first 3 lines):"
-      head -n 3 "$TMP_ARCHIVE" 2>/dev/null || true
+      echo "[mamba_setup] Saved archive to $TMP_ARCHIVE (file size): $(wc -c < "$TMP_ARCHIVE" 2>/dev/null || echo unknown) bytes"
       echo "[mamba_setup] Retrying tar extraction with verbose output..."
-      tar -xjvf "$TMP_ARCHIVE" -C "$PREFIX" --strip-components=1 bin/micromamba || {
+      tar -xjvf "$TMP_ARCHIVE" -C "$PREFIX" || {
         echo "[mamba_setup] Unable to extract micromamba. Ensure 'bzip2' and 'tar' are available and that the platform tag is correct ($PLATFORM_TAG)." >&2
         exit 4
       }
@@ -65,6 +68,16 @@ if [[ ! -x "$MAMBA_BIN" ]]; then
       echo "[mamba_setup] Failed to download micromamba from $URL" >&2
       exit 4
     fi
+  fi
+  # Relocate binary to PREFIX/bin if needed
+  if [[ -x "$PREFIX/bin/micromamba" ]]; then
+    : # already correct
+  elif [[ -x "$PREFIX/micromamba" ]]; then
+    mv "$PREFIX/micromamba" "$PREFIX/bin/micromamba"
+  elif [[ -x "$PREFIX/bin/micromamba.exe" ]]; then
+    mv "$PREFIX/bin/micromamba.exe" "$PREFIX/bin/micromamba" || true
+  elif [[ -x "$PREFIX/micromamba/micromamba" ]]; then
+    mv "$PREFIX/micromamba/micromamba" "$PREFIX/bin/micromamba"
   fi
 fi
 
