@@ -1,0 +1,11 @@
+{
+  "qdec": "/path/to/qdec.table.dat",
+  "aseg": "/path/to/aseg.long.table",
+  "roi": "Left.Hippocampus",
+  "formula": "~ tp*group",
+  "zcols": [1, 2],
+  "contrast": [0, 0, 0, 1],
+  "outdir": "results_univar",
+  "time_col": "tp",
+  "id_col": null
+}

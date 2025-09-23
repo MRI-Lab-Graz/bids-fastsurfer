@@ -30,13 +30,17 @@ jq --version
 - `bids_long_fastsurfer.sh` — Longitudinal wrapper
 - `fastsurfer_options.json` — Example configuration file with cross/long sections
 - `license.txt` — Placeholder filename referenced by scripts (replace with your actual FreeSurfer license file path in the config)
+- `scripts/install.sh` — One-command installer for the R analysis environment (micromamba)
+- `scripts/generate_qdec.py` — Build Qdec from BIDS participants.tsv and subjects_dir; optional .long symlink helper
+- `scripts/fslmer_univariate.R` — Flexible univariate LME/GAM/GLM helper (fslmer/mgcv/stats)
+- `configs/fslmer_univariate.example.json` — Example JSON config for the R script
 
 ## Example BIDS datasets
 
 If you need public BIDS datasets to try the wrappers, you can use these OpenNeuro examples (or any other BIDS-compatible dataset):
 
-- Longitudinal: ds004937 v1.0.1 — https://openneuro.org/datasets/ds004937/versions/1.0.1
-- Cross-sectional: ds004965 v1.0.1 — https://openneuro.org/datasets/ds004965/versions/1.0.1
+- Longitudinal: ds004937 v1.0.1 — <https://openneuro.org/datasets/ds004937/versions/1.0.1>
+- Cross-sectional: ds004965 v1.0.1 — <https://openneuro.org/datasets/ds004965/versions/1.0.1>
 
 Download using your preferred tool (OpenNeuro CLI, openneuro-py, DataLad, or web download) and point `<BIDS_ROOT>` to the dataset root.
 
@@ -57,7 +61,7 @@ openneuro download --snapshot 1.0.1 --dataset ds004937 --destination /path/to/BI
 openneuro download --snapshot 1.0.1 --dataset ds004965 --destination /path/to/BIDS-ds004965
 ```
 
-- Python: openneuro-py (https://pypi.org/project/openneuro-py/)
+- Python: openneuro-py (<https://pypi.org/project/openneuro-py/>)
 
 ```zsh
 # Create/activate a virtual environment (optional)
@@ -85,39 +89,42 @@ Both scripts read a single JSON file with top-level container paths and per-pipe
 
 ```json
 {
-	"fs_license": "/abs/path/to/license.txt",
-	"sif_file": "/abs/path/to/fastsurfer-gpu.sif",
-	"cross": {
-		"vox_size": "min",
-		"seg_only": true,
-		"3T": true,
-		"reg_mode": "coreg",
-		"qc_snap": false
-		// ... more cross-sectional options (see below)
-	},
-	"long": {
-		"parallel": null,
-		"parallel_seg": null,
-		"parallel_surf": null,
-		"reg_mode": "coreg",
-		"3T": true,
-		"qc_snap": false
-		// ... more longitudinal options (see below)
-	}
+  "fs_license": "/abs/path/to/license.txt",
+  "sif_file": "/abs/path/to/fastsurfer-gpu.sif",
+  "cross": {
+    "vox_size": "min",
+    "seg_only": true,
+    "3T": true,
+    "reg_mode": "coreg",
+    "qc_snap": false
+    // ... more cross-sectional options (see below)
+  },
+  "long": {
+    "parallel": null,
+    "parallel_seg": null,
+    "parallel_surf": null,
+    "reg_mode": "coreg",
+    "3T": true,
+    "qc_snap": false
+    // ... more longitudinal options (see below)
+  }
 }
 ```
 
 - Notes:
+
 - Top-level keys:
-	- `fs_license` — Absolute path to your FreeSurfer license file.
-	- `sif_file` — Absolute path to the FastSurfer GPU Singularity image.
+  - `fs_license` — Absolute path to your FreeSurfer license file.
+  - `sif_file` — Absolute path to the FastSurfer GPU Singularity image.
+
 - The `cross` and `long` sections mirror FastSurfer flags. Values are translated as follows:
-	- Boolean `true` → adds `--flag`
-	- Boolean `false` or `null` → omitted
-	- Strings/numbers → adds `--flag value`
+  - Boolean `true` → adds `--flag`
+  - Boolean `false` or `null` → omitted
+  - Strings/numbers → adds `--flag value`
+
 - Unknown key behavior differs:
-	- Longitudinal (`long`): unknown keys are ignored; run with `--debug` to see warnings.
-	- Cross-sectional (`cross`): keys are forwarded as flags to FastSurfer; unknown ones may cause errors. Keep the `cross` section minimal and only include supported flags.
+  - Longitudinal (`long`): unknown keys are ignored; run with `--debug` to see warnings.
+  - Cross-sectional (`cross`): keys are forwarded as flags to FastSurfer; unknown ones may cause errors. Keep the `cross` section minimal and only include supported flags.
 
 Common option keys you can use in `cross`/`long`:
 - Parallelization and threading: `parallel`, `parallel_seg`, `parallel_surf`, `threads`, `threads_seg`, `threads_surf`, `batch`
@@ -295,6 +302,182 @@ bash bids_long_fastsurfer.sh /path/to/BIDS /path/to/derivatives/fastsurfer_long 
 - Start with `--dry_run --debug` to inspect the constructed commands.
 - Use `--pilot` to quickly validate the environment on a small subset before scaling up.
 - Keep your config minimal and explicit; remove unused keys to reduce ambiguity.
+
+## Longitudinal statistics: generate Qdec
+
+To run FreeSurfer-style longitudinal statistics (e.g., with the R package fslmer), generate a Qdec file from your BIDS `participants.tsv` and your FastSurfer/FreeSurfer subjects directory.
+
+Script: `scripts/generate_qdec.py`
+
+Inputs:
+- `--participants`: Path to `participants.tsv` with at least `participant_id` and optionally `session_id`, plus covariates (`age`, `sex`, `group`, ...).
+- `--subjects-dir`: Path to the FastSurfer/FreeSurfer subjects directory. Expect directories like `sub-1291003` (base) and `sub-1291003_ses-1` (timepoint).
+- `--output`: Output path for the Qdec TSV (default: `qdec.table.dat`).
+- `--include-columns`: Optional explicit list of covariates to include from `participants.tsv`. If omitted, all columns except participant/session are included.
+- `--strict`: If set, the script fails when a timepoint has no matching participants row; otherwise fills `n/a`.
+- `--inspect`: Print `participants.tsv` column names and exit (useful for column selection).
+- `--bids`: Optional BIDS root; if provided, the script prints a consistency summary comparing `participants.tsv`, `subjects_dir`, and the BIDS tree.
+- `--list-limit`: Maximum number of subject IDs to print per list in the summary (default: 20). The summary avoids printing the same list twice when it’s identical across sources.
+
+Output columns:
+
+- `fsid` — timepoint subject id (e.g., `sub-1291003_ses-1`)
+- `fsid-base` — base/template id (e.g., `sub-1291003`)
+- `tp` — numeric timepoint derived from `ses-<number>` (or `n/a` if not parseable)
+- Covariates — selected from `participants.tsv`
+
+Example:
+
+```zsh
+python scripts/generate_qdec.py \
+  --participants /path/to/BIDS/participants.tsv \
+  --subjects-dir /path/to/derivatives/fastsurfer_long \
+  --output /path/to/qdec.table.dat \
+  --include-columns age sex group
+```
+
+You can also inspect columns or print a consistency summary:
+
+```zsh
+# See columns in participants.tsv
+python scripts/generate_qdec.py --participants /path/to/participants.tsv --subjects-dir /path/to/subjects --inspect
+
+# Generate Qdec and print a summary of overlaps/missing subjects across sources
+python scripts/generate_qdec.py --participants /path/to/participants.tsv --subjects-dir /path/to/subjects --bids /path/to/BIDS
+```
+
+Use the resulting `qdec.table.dat` with FreeSurfer longitudinal statistics and tools like `fslmer`:
+
+- FreeSurfer Longitudinal: <https://surfer.nmr.mgh.harvard.edu/fswiki/LongitudinalStatistics>
+- fslmer: <https://github.com/Deep-MI/fslmer>
+
+## Univariate stats in R (fslmer / GAM / GLM) 🎓
+
+A flexible R helper is included to run univariate models on aseg/aparc tables using:
+- Mixed-effects via `fslmer`
+- Generalized Additive Models via `mgcv`
+- Generalized Linear Models via base `stats`
+
+Script: `scripts/fslmer_univariate.R`
+
+Basic usage:
+
+```zsh
+Rscript scripts/fslmer_univariate.R \
+  --qdec /path/to/qdec.table.dat \
+  --aseg /path/to/aseg.long.table \
+  --roi Left.Hippocampus \
+  --formula "~ tp*group" \
+  --zcols 1,2 \
+  --contrast 0,0,0,1 \
+  --outdir results_univar --save-merged
+```
+
+Flags:
+
+- `--qdec`: Qdec TSV generated by this repo.
+- `--aseg`: aseg/aparc table made with `asegstats2table --qdec-long` or `aparcstats2table --qdec-long`.
+- `--roi`: ROI column name (R uses `.` instead of `-`, e.g., `Left.Hippocampus`).
+- `--formula`: R fixed-effect formula (default `~ tp`). Add covariates/interaction as needed.
+- `--zcols`: Random-effect columns (in design matrix order). `1,2` means random intercept and random slope for time.
+- `--contrast`: Comma-separated vector matching `ncol(X)` to test a specific effect (optional).
+- `--time-col`: If your time variable is not `tp` or `Time.From.Baseline`, set it here.
+- `--id-col`: If the ID column in aseg is not `Measure:volume`, specify it.
+- `--print-cols`: Print column names of qdec and aseg and exit.
+- `--outdir`: Output directory (default `fslmer_out`).
+- `--save-merged`: Save merged design/response as CSV.
+
+Outputs in `--outdir`:
+
+- `fit.rds` — model fit from `lme_fit_FS` (RDS).
+- `Bhat.txt` — fixed-effect coefficients.
+- `F_test.txt` — if `--contrast` given, F-values, p-values, sign, and df.
+- `merged_data.csv` — optional merged data dump.
+
+This maps closely to the fslmer README tutorial while automating the data loading/merging and making the model specification configurable via flags.
+
+Config-driven usage and reproducibility:
+
+- Instead of passing many flags, you can provide a JSON config via `--config` (see `configs/fslmer_univariate.example.json`). Any CLI flag overrides the same field in the JSON. The script writes the merged settings to `<outdir>/used_config.json`.
+- Example JSON fields: `qdec`, `aseg`, `roi`, `formula`, `zcols` (array of integers), `contrast` (array), `outdir`, `time_col`, `id_col`.
+- To run: point `--config` to your JSON file; optionally add `--outdir` or other flags to override.
+
+Additional flag:
+
+- `--config`: Path to a JSON file with the same keys as the CLI flags. Useful to version-control analyses.
+
+## Installation (one command)
+
+Set up everything needed for the R analysis helper with micromamba:
+
+```zsh
+bash scripts/install.sh
+```
+
+What it does:
+- Bootstraps micromamba under `~/.local/micromamba` if missing
+- Creates/updates an env (default `fastsurfer-r`) from `scripts/environment.yml` in strict mode
+- Installs/validates R packages in the right order (checkmate/backports → bettermc → fslmer; plus mgcv, optparse, jsonlite)
+
+Activate, verify, and use:
+
+```zsh
+# Activate the env
+source scripts/mamba_activate.sh
+
+# Verify packages
+Rscript -e 'pkgs <- c("optparse","jsonlite","mgcv","checkmate","bettermc","fslmer"); print(sapply(pkgs, requireNamespace, quietly=TRUE))'
+
+# See helper usage
+Rscript scripts/fslmer_univariate.R --help
+
+# Deactivate later
+source scripts/mamba_deactivate.sh
+```
+
+Advanced install options:
+
+```zsh
+# Use spec-based installation (alternative to YAML), skip compilers on macOS
+bash scripts/install.sh --use-specs --no-compilers
+
+# Choose a custom env name and R version
+bash scripts/install.sh --env my-fast-env --r 4.4
+```
+
+### Using FreeSurfer tools with FastSurfer longitudinal outputs
+
+Some FreeSurfer utilities (e.g., `asegstats2table --qdec-long`) expect timepoints to be arranged as `<fsid>.long.<fsid-base>/stats/aseg.stats`. FastSurfer’s longitudinal pipeline may not create these `.long.*` directories by default.
+
+To make FreeSurfer tools work without re-running with FreeSurfer, this repo provides a safe symlink workflow:
+
+```zsh
+# Preview/verify which links would be needed (no changes)
+python scripts/generate_qdec.py \
+  --participants /path/to/participants.tsv \
+  --subjects-dir /path/to/fastsurfer_subjects \
+  --verify-long --list-limit 10
+
+# Create .long.<base> symlinks that point to each timepoint directory (dry-run)
+python scripts/generate_qdec.py \
+  --participants /path/to/participants.tsv \
+  --subjects-dir /path/to/fastsurfer_subjects \
+  --link-long --link-dry-run
+
+# Actually create/update links (careful):
+python scripts/generate_qdec.py \
+  --participants /path/to/participants.tsv \
+  --subjects-dir /path/to/fastsurfer_subjects \
+  --link-long
+
+# If an existing symlink points elsewhere, allow updating it:
+python scripts/generate_qdec.py \
+  --participants /path/to/participants.tsv \
+  --subjects-dir /path/to/fastsurfer_subjects \
+  --link-long --link-force
+```
+
+After creating the links, `asegstats2table --qdec-long` will be able to find `stats/aseg.stats` under the expected names.
 
 ## Credits and License
 
