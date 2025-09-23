@@ -26,14 +26,46 @@ while [[ $# -gt 0 ]]; do
 done
 
 mkdir -p "$PREFIX"
-ARCH=$(uname -m)
-PLAT=$(uname | tr '[:upper:]' '[:lower:]')
+
+# Determine platform triplet expected by micromamba API
+UNAME_S=$(uname -s)
+UNAME_M=$(uname -m)
+case "$UNAME_S" in
+  Linux) OS="linux" ;;
+  Darwin) OS="osx" ;;
+  *) OS="linux" ;;
+esac
+case "$UNAME_M" in
+  x86_64|amd64) ARCH_TAG="64" ;;
+  aarch64|arm64)
+    if [[ "$OS" == "osx" ]]; then ARCH_TAG="arm64"; else ARCH_TAG="aarch64"; fi ;;
+  *) ARCH_TAG="64" ;;
+esac
+PLATFORM_TAG="$OS-$ARCH_TAG"
+
 MAMBA_BIN="$PREFIX/bin/micromamba"
 if [[ ! -x "$MAMBA_BIN" ]]; then
-  echo "[mamba_setup] Installing micromamba to $PREFIX"
-  curl -Ls "https://micro.mamba.pm/api/micromamba/$PLAT-$ARCH/latest" -o "$PREFIX/micromamba.tar.bz2"
+  echo "[mamba_setup] Installing micromamba ($PLATFORM_TAG) to $PREFIX"
+  URL="https://micro.mamba.pm/api/micromamba/${PLATFORM_TAG}/latest"
   mkdir -p "$PREFIX/bin"
-  tar -xjf "$PREFIX/micromamba.tar.bz2" -C "$PREFIX" --strip-components=1 bin/micromamba
+  # Stream-extract; requires bzip2 support in tar
+  if ! curl -fsSL "$URL" | tar -xj -C "$PREFIX" --strip-components=1 bin/micromamba 2>/dev/null; then
+    echo "[mamba_setup] Download/extract failed from $URL" >&2
+    echo "[mamba_setup] Trying to download to file for inspection..." >&2
+    TMP_ARCHIVE="$PREFIX/micromamba_${PLATFORM_TAG}.tar.bz2"
+    if curl -fsSL "$URL" -o "$TMP_ARCHIVE"; then
+      echo "[mamba_setup] Saved archive to $TMP_ARCHIVE (first 3 lines):"
+      head -n 3 "$TMP_ARCHIVE" 2>/dev/null || true
+      echo "[mamba_setup] Retrying tar extraction with verbose output..."
+      tar -xjvf "$TMP_ARCHIVE" -C "$PREFIX" --strip-components=1 bin/micromamba || {
+        echo "[mamba_setup] Unable to extract micromamba. Ensure 'bzip2' and 'tar' are available and that the platform tag is correct ($PLATFORM_TAG)." >&2
+        exit 4
+      }
+    else
+      echo "[mamba_setup] Failed to download micromamba from $URL" >&2
+      exit 4
+    fi
+  fi
 fi
 
 export MAMBA_ROOT_PREFIX="$PREFIX"
