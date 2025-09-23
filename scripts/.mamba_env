@@ -1,0 +1,2 @@
+MAMBA_ROOT_PREFIX="/Users/karl/.local/micromamba"
+ENV_NAME="fastsurfer-r"

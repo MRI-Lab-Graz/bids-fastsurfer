@@ -7,7 +7,14 @@ set -euo pipefail
 # Usage:
 #   bash scripts/mamba_run_r.sh --config /path/to/config.json [other args]
 
-ENV_NAME="fastsurfer-r"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd)"
+ENV_RECORD="$SCRIPT_DIR/.mamba_env"
+if [[ -f "$ENV_RECORD" ]]; then
+  # shellcheck disable=SC1090
+  source "$ENV_RECORD"
+fi
+ENV_NAME="${ENV_NAME:-fastsurfer-r}"
+MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$HOME/.local/micromamba}"
 
 # Resolve micromamba binary in this order:
 # 1) MAMBA_ROOT_PREFIX/bin/micromamba if env var is set
@@ -25,4 +32,11 @@ else
   exit 1
 fi
 
-exec "$MAMBA_BIN" run -n "$ENV_NAME" Rscript scripts/fslmer_univariate.R "$@"
+ENV_PREFIX="$MAMBA_ROOT_PREFIX/envs/$ENV_NAME"
+if [[ ! -d "$ENV_PREFIX" ]]; then
+  echo "Environment prefix not found: $ENV_PREFIX" >&2
+  echo "Run setup: bash scripts/mamba_setup.sh" >&2
+  exit 1
+fi
+
+exec "$MAMBA_BIN" run -p "$ENV_PREFIX" Rscript scripts/fslmer_univariate.R "$@"

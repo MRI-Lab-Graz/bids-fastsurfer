@@ -15,34 +15,33 @@ fi
 : "${MAMBA_ROOT_PREFIX:=${HOME}/.local/micromamba}"
 : "${ENV_NAME:=fastsurfer-r}"
 
+# Export to ensure downstream hook/commands see the intended root
+export MAMBA_ROOT_PREFIX
+
 MAMBA_BIN="$MAMBA_ROOT_PREFIX/bin/micromamba"
 CURRENT_SHELL="bash"
 if [[ -n "${ZSH_VERSION:-}" ]] || [[ "${SHELL:-}" == *"zsh"* ]]; then
   CURRENT_SHELL="zsh"
 fi
 
-if ! command -v micromamba >/dev/null 2>&1; then
-  if [[ -x "$MAMBA_BIN" ]]; then
-    eval "$("$MAMBA_BIN" shell hook -s "$CURRENT_SHELL")"
-  else
-    echo "micromamba not found. Run: bash scripts/mamba_setup.sh" >&2
-    return 1 2>/dev/null || exit 1
-  fi
+if [[ -x "$MAMBA_BIN" ]]; then
+  # Always prefer the recorded micromamba for consistent root
+  eval "$("$MAMBA_BIN" shell hook -s "$CURRENT_SHELL")"
+else
+  echo "micromamba not found at $MAMBA_ROOT_PREFIX/bin/micromamba. Run: bash scripts/mamba_setup.sh" >&2
+  return 1 2>/dev/null || exit 1
 fi
 
-# If micromamba is available on PATH, still eval the shell hook to expose activate
-if command -v micromamba >/dev/null 2>&1; then
-  eval "$(micromamba shell hook -s "$CURRENT_SHELL")"
-fi
-
-micromamba activate "$ENV_NAME" >/dev/null
+# Activate by env name using the recorded root (hook points to the right micromamba)
+ENV_PREFIX="$MAMBA_ROOT_PREFIX/envs/$ENV_NAME"
+"$MAMBA_BIN" activate "$ENV_NAME" >/dev/null
 RS_BIN="$(command -v Rscript || true)"
-ENV_BIN_DIR="$MAMBA_ROOT_PREFIX/envs/$ENV_NAME/bin"
+ENV_BIN_DIR="$ENV_PREFIX/bin"
 if [[ -z "$RS_BIN" || "$RS_BIN" != "$ENV_BIN_DIR/Rscript" ]]; then
   echo "Warning: Rscript not resolving to env bin. Got: ${RS_BIN:-not found}"
   echo "If PATH didn't update, try manually: eval \"$($MAMBA_BIN shell hook -s $CURRENT_SHELL)\" && micromamba activate $ENV_NAME"
 fi
-echo "Activated micromamba env: $ENV_NAME"
+echo "Activated micromamba env: $ENV_NAME ($ENV_PREFIX)"
 
 # Avoid renv autoloader and user/site profiles interfering in this env
 export RENV_CONFIG_AUTOLOADER_ENABLED=false
@@ -50,10 +49,19 @@ export RENV_CONFIG_AUTOLOADER_ENABLED=false
 export R_PROFILE_USER=
 export R_PROFILE=
 
-# Provide a convenience wrapper so plain 'Rscript' runs with --vanilla in this shell
-# This limits surprises from project or user profiles trying to source renv/activate.R
+# Provide a convenience wrapper so plain 'Rscript' runs with --vanilla for scripts
+# but does not interfere with informational flags like --help/--version
 Rscript() {
-  command Rscript --vanilla "$@"
+  if [[ $# -eq 0 ]]; then
+    command Rscript "$@"
+    return $?
+  fi
+  case "$1" in
+    --help|--version|-h|-v)
+      command Rscript "$@" ;;
+    *)
+      command Rscript --vanilla "$@" ;;
+  esac
 }
 # 'export -f' is bash-only; safe to skip in zsh
 if [[ -n "${BASH_VERSION:-}" ]]; then

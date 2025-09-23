@@ -3,8 +3,6 @@
 suppressPackageStartupMessages({
   library(optparse)
   library(jsonlite)
-  # fslmer for LME
-  library(fslmer)
   # GLM base
   library(stats)
   # GAM (optional); load lazily later to avoid hard dependency
@@ -168,9 +166,10 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
   # Wrapper to optionally silence optimizer output and choose engine
   fit_fn <- switch(engine,
     fslmer = {
+      if (!requireNamespace("fslmer", quietly=TRUE)) return(list(error="Package 'fslmer' is required for --engine fslmer"))
       zcols <- if (is.numeric(opt$zcols)) as.integer(opt$zcols) else as.integer(strsplit(opt$zcols, ",")[[1]])
       if (any(is.na(zcols))) return(list(error="--zcols must be integers"))
-      function() lme_fit_FS(X, zcols, Y, ni)
+      function() fslmer::lme_fit_FS(X, zcols, Y, ni)
     },
     glm = {
       dat$y <- as.numeric(dat[[roi_name]])
@@ -253,7 +252,7 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
         Cvec <- if (is.numeric(opt$contrast)) as.numeric(opt$contrast) else as.numeric(strsplit(opt$contrast, ",")[[1]])
         if (length(Cvec) != ncol(X)) return(list(error=sprintf("Contrast length %d != ncol(X) %d", length(Cvec), ncol(X))))
         C <- matrix(Cvec, nrow=1)
-        F_C <- lme_F(fit, C)
+        F_C <- fslmer::lme_F(fit, C)
       }
       out$stats <- fit; out$F_C <- F_C; out$Cvec <- Cvec
     } else if (engine == "glm") {
