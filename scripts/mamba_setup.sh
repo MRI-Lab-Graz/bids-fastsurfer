@@ -20,10 +20,11 @@ R_VERSION=""
 NO_COMPILERS=0
 USER_TMPDIR=""
 USER_PKGS_DIR=""
+USER_PREFIX_SET=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --prefix) PREFIX="${2:-}"; shift 2 ;;
+  --prefix) PREFIX="${2:-}"; USER_PREFIX_SET=1; shift 2 ;;
     --env) ENV_NAME="${2:-}"; shift 2 ;;
     --r) R_VERSION="${2:-}"; shift 2 ;;
     --no-compilers) NO_COMPILERS=1; shift ;;
@@ -96,6 +97,12 @@ if [[ -n "$USER_PKGS_DIR" ]]; then
   export MAMBA_PKGS_DIRS="$USER_PKGS_DIR"
   echo "[mamba_setup] Using custom pkgs dir: $USER_PKGS_DIR"
 fi
+# If pkgs-dir is on a large volume and no explicit --prefix was given, place the envs there too
+if [[ -n "$USER_PKGS_DIR" && $USER_PREFIX_SET -eq 0 ]]; then
+  PKG_PARENT="$(cd "$(dirname "$USER_PKGS_DIR")" && pwd)"
+  PREFIX="$PKG_PARENT/micromamba-root"
+  echo "[mamba_setup] No --prefix provided; setting micromamba root to: $PREFIX"
+fi
 if [[ -n "$USER_TMPDIR" ]]; then
   mkdir -p "$USER_TMPDIR"
   export TMPDIR="$USER_TMPDIR"
@@ -165,6 +172,12 @@ awk '{
   if (line ~ /^\s*$/) next
   print line
 }' "$TMP_RAW_YAML" > "$TMP_YAML"
+
+# Ensure conda-forge channel exists in sanitized YAML (safety for edge sanitization cases)
+if ! grep -qE '^[[:space:]]*-[[:space:]]*conda-forge[[:space:]]*$' "$TMP_YAML"; then
+  echo "[mamba_setup] Adding missing conda-forge channel to YAML"
+  printf "channels:\n  - conda-forge\n%s" "$(cat "$TMP_YAML")" > "$TMP_YAML"
+fi
 
 echo "[mamba_setup] Creating/updating env '$ENV_NAME' from $TMP_YAML"
 # Try creating from YAML first
