@@ -34,6 +34,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# If pkgs-dir is on a large volume and no explicit --prefix was given, place the envs there too
+if [[ -n "$USER_PKGS_DIR" && $USER_PREFIX_SET -eq 0 ]]; then
+  PKG_PARENT="$(cd "$(dirname "$USER_PKGS_DIR")" && pwd)"
+  PREFIX="$PKG_PARENT/micromamba-root"
+  echo "[mamba_setup] No --prefix provided; setting micromamba root to: $PREFIX"
+fi
+
 mkdir -p "$PREFIX"
 
 # Determine platform triplet expected by micromamba API
@@ -97,12 +104,6 @@ if [[ -n "$USER_PKGS_DIR" ]]; then
   export MAMBA_PKGS_DIRS="$USER_PKGS_DIR"
   echo "[mamba_setup] Using custom pkgs dir: $USER_PKGS_DIR"
 fi
-# If pkgs-dir is on a large volume and no explicit --prefix was given, place the envs there too
-if [[ -n "$USER_PKGS_DIR" && $USER_PREFIX_SET -eq 0 ]]; then
-  PKG_PARENT="$(cd "$(dirname "$USER_PKGS_DIR")" && pwd)"
-  PREFIX="$PKG_PARENT/micromamba-root"
-  echo "[mamba_setup] No --prefix provided; setting micromamba root to: $PREFIX"
-fi
 if [[ -n "$USER_TMPDIR" ]]; then
   mkdir -p "$USER_TMPDIR"
   export TMPDIR="$USER_TMPDIR"
@@ -134,7 +135,9 @@ channels:
 dependencies:
   - r-base=4.5
   - make
-  - compilers
+  - c-compiler
+  - cxx-compiler
+  - fortran-compiler
   - r-optparse
   - r-jsonlite
   - r-mgcv
