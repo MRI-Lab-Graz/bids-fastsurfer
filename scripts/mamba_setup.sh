@@ -71,8 +71,37 @@ fi
 export MAMBA_ROOT_PREFIX="$PREFIX"
 "$MAMBA_BIN" shell hook -s bash >/dev/null 2>&1 || true
 
-YAML="env/environment.yml"
-[[ -f "$YAML" ]] || { echo "Missing $YAML" >&2; exit 3; }
+# Prefer an environment.yml located alongside this script; fallback to env/environment.yml
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+YAML="$SCRIPT_DIR/environment.yml"
+FALLBACK_YAML="env/environment.yml"
+
+if [[ -f "$FALLBACK_YAML" && ! -f "$YAML" ]]; then
+  echo "[mamba_setup] Using fallback $FALLBACK_YAML (no scripts/environment.yml found)."
+  YAML="$FALLBACK_YAML"
+fi
+
+if [[ ! -f "$YAML" ]]; then
+  echo "[mamba_setup] No environment.yml found — creating scripts/environment.yml with defaults."
+  cat >"$SCRIPT_DIR/environment.yml" <<'YML'
+name: fastsurfer-r
+channels:
+  - conda-forge
+dependencies:
+  - r-base=4.5
+  - make
+  - compilers
+  - r-optparse
+  - r-jsonlite
+  - r-mgcv
+  - r-remotes
+  - r-bh
+  - r-matrix
+  - r-rcpp
+  - r-rcpparmadillo
+YML
+  YAML="$SCRIPT_DIR/environment.yml"
+fi
 
 # Optionally override R version by editing a temp YAML on the fly
 TMP_YAML="${YAML}.tmp"
