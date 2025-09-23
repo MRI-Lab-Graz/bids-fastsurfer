@@ -138,7 +138,38 @@ awk '{
 }' "$TMP_RAW_YAML" > "$TMP_YAML"
 
 echo "[mamba_setup] Creating/updating env '$ENV_NAME' from $TMP_YAML"
-"$MAMBA_BIN" create -y -n "$ENV_NAME" -f "$TMP_YAML" || "$MAMBA_BIN" env update -n "$ENV_NAME" -f "$TMP_YAML" --prune
+# Try creating from YAML first
+set +e
+"$MAMBA_BIN" create -y -n "$ENV_NAME" -f "$TMP_YAML"
+CREATE_RC=$?
+set -e
+if [[ $CREATE_RC -ne 0 ]]; then
+  echo "[mamba_setup] YAML-based create failed (rc=$CREATE_RC). Showing sanitized YAML (first 50 lines):"
+  head -n 50 "$TMP_YAML" || true
+  echo "[mamba_setup] Falling back to spec-based create by extracting dependencies..."
+  # Extract dependency specs from sanitized YAML
+  mapfile -t SPECS < <(awk '/^dependencies:/ {in_dep=1; next} /^\w/ {in_dep=0} in_dep && /^\s*-\s*/ { sub(/^\s*-\s*/, ""); if (length($0)>0) print $0 }' "$TMP_YAML")
+  if [[ ${#SPECS[@]} -eq 0 ]]; then
+    echo "[mamba_setup] No dependency specs could be parsed from $TMP_YAML" >&2
+    exit 5
+  fi
+  echo "[mamba_setup] Specs: ${SPECS[*]}"
+  # Use explicit channel from YAML or default to conda-forge
+  CHANNELS=("-c" "conda-forge")
+  set +e
+  "$MAMBA_BIN" create -y -n "$ENV_NAME" "${CHANNELS[@]}" "${SPECS[@]}"
+  CREATE_RC=$?
+  set -e
+  if [[ $CREATE_RC -ne 0 ]]; then
+    echo "[mamba_setup] Spec-based create also failed (rc=$CREATE_RC). Aborting." >&2
+    exit $CREATE_RC
+  fi
+else
+  # On success, try to update from YAML to ensure sync (harmless if no changes)
+  set +e
+  "$MAMBA_BIN" env update -n "$ENV_NAME" -f "$TMP_YAML" --prune
+  set -e
+fi
 
 echo "[mamba_setup] Installing R packages inside env: bettermc (robust), Deep-MI/fslmer"
 "$MAMBA_BIN" run -n "$ENV_NAME" Rscript -e 'if (!requireNamespace("remotes", quietly=TRUE)) install.packages("remotes", repos="https://cloud.r-project.org")'
