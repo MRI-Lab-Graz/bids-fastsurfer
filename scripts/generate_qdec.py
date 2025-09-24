@@ -32,6 +32,8 @@ import os
 import csv
 import re
 import sys
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 
@@ -71,6 +73,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--link-long", action="store_true", help="Create <fsid>.long.<base> symlinks pointing to the timepoint directories when missing")
     p.add_argument("--link-dry-run", action="store_true", help="Print the symlink actions without making changes")
     p.add_argument("--link-force", action="store_true", help="If an existing symlink points elsewhere, replace it (does not delete real directories)")
+    p.add_argument("--aseg", action="store_true", help="After writing QDEC, run asegstats2table and store aseg.long.table alongside it")
     return p.parse_args(argv)
 
 
@@ -129,6 +132,9 @@ def scan_subjects_dir(subjects_dir: Path) -> List[Tuple[str, str, Optional[str]]
     entries: List[Tuple[str, str, Optional[str]]] = []
     for child in sorted(subjects_dir.iterdir()):
         if not child.is_dir():
+            continue
+        if ".long." in child.name:
+            # Skip longitudinal derivative directories to avoid treating them as timepoints
             continue
         m = SUBJECT_DIR_PATTERN.match(child.name)
         if not m:
@@ -375,6 +381,10 @@ def verify_and_link_long(
     present = 0
 
     for fsid, base, ses in timepoints:
+        if ".long." in fsid:
+            skipped += 1
+            print(f"skipping: {fsid} (already a .long entry)")
+            continue
         tp_dir = subjects_dir / fsid
         long_dir = subjects_dir / f"{fsid}.long.{base}"
         stats_path = tp_dir / "stats" / "aseg.stats"
@@ -410,6 +420,46 @@ def verify_and_link_long(
         limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
         sample = ", ".join(sorted(missing_stats)[:limit])
         print(sample + (" ..." if len(missing_stats) > limit else ""))
+
+
+def run_asegstats2table(qdec_path: Path, subjects_dir: Path) -> int:
+    """Run asegstats2table with SUBJECTS_DIR pointing to subjects_dir."""
+
+    aseg_bin = shutil.which("asegstats2table")
+    if not aseg_bin:
+        print(
+            "asegstats2table not found in PATH. Source FreeSurfer before using --aseg.",
+            file=sys.stderr,
+        )
+        return 4
+
+    aseg_out = qdec_path.parent / "aseg.long.table"
+    aseg_out.parent.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["SUBJECTS_DIR"] = str(subjects_dir.resolve())
+
+    cmd = [
+        aseg_bin,
+        "--qdec-long",
+        str(qdec_path),
+        "-t",
+        str(aseg_out),
+        "--skip",
+    ]
+    print(f"Running: {' '.join(cmd)} (with SUBJECTS_DIR={env['SUBJECTS_DIR']})")
+
+    try:
+        subprocess.run(cmd, check=True, env=env)
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"asegstats2table failed with exit code {exc.returncode}. Command: {' '.join(cmd)}",
+            file=sys.stderr,
+        )
+        return exc.returncode or 5
+
+    print(f"Wrote asegstats2table output: {aseg_out}")
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -469,6 +519,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             dry_run=args.link_dry_run,
             force=args.link_force,
         )
+
+    if args.aseg:
+        rc = run_asegstats2table(out_path, args.subjects_dir)
+        if rc != 0:
+            return rc
     return 0
 
 
