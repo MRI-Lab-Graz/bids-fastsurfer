@@ -1,0 +1,9 @@
+{
+  "qdec": "results/hippocampus_analysis/qdec.table.dat",
+  "aseg": "results/hippocampus_analysis/aseg.long.table",
+  "formula": "~ tp * sex + age + EstimatedTotalIntraCranialVol",
+  "zcols": "1,2",
+  "outdir": "results/hippocampus_analysis/fslmer_group_time",
+  "time_col": "tp",
+  "id_col": "Measure:volume"
+}

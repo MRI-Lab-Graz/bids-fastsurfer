@@ -41,20 +41,45 @@ msg <- function(...) { if (!isTRUE(opt$quiet)) cat(sprintf(...), sep="") }
 if (!is.null(opt$config)) {
   if (!file.exists(opt$config)) stop(sprintf("Config file not found: %s", opt$config))
   cfg <- jsonlite::fromJSON(opt$config, simplifyVector = TRUE)
-  merge_field <- function(name, default_val) {
-    if (!is.null(opt[[name]])) return(opt[[name]])
-    if (!is.null(cfg[[name]])) return(cfg[[name]])
+
+  defaults <- list(
+    qdec = NULL,
+    aseg = NULL,
+    roi = NULL,
+    formula = "~ tp",
+    zcols = "1,2",
+    contrast = NULL,
+    outdir = "fslmer_out",
+    time_col = NULL,
+    id_col = NULL
+  )
+
+  apply_cfg <- function(name) {
+    default_val <- defaults[[name]]
+    cli_val <- opt[[name]]
+    cfg_val <- cfg[[name]]
+
+    if (!is.null(cli_val) && !identical(cli_val, default_val)) {
+      return(cli_val)
+    }
+    if (!is.null(cfg_val)) {
+      return(cfg_val)
+    }
+    if (!is.null(cli_val)) {
+      return(cli_val)
+    }
     default_val
   }
-  opt$qdec       <- merge_field("qdec", opt$qdec)
-  opt$aseg       <- merge_field("aseg", opt$aseg)
-  opt$roi        <- merge_field("roi", opt$roi)
-  opt$formula    <- merge_field("formula", opt$formula)
-  opt$zcols      <- merge_field("zcols", opt$zcols)
-  opt$contrast   <- merge_field("contrast", opt$contrast)
-  opt$outdir     <- merge_field("outdir", opt$outdir)
-  opt$time_col   <- merge_field("time_col", opt$time_col)
-  opt$id_col     <- merge_field("id_col", opt$id_col)
+
+  opt$qdec     <- apply_cfg("qdec")
+  opt$aseg     <- apply_cfg("aseg")
+  opt$roi      <- apply_cfg("roi")
+  opt$formula  <- apply_cfg("formula")
+  opt$zcols    <- apply_cfg("zcols")
+  opt$contrast <- apply_cfg("contrast")
+  opt$outdir   <- apply_cfg("outdir")
+  opt$time_col <- apply_cfg("time_col")
+  opt$id_col   <- apply_cfg("id_col")
 }
 
 # For --print-cols we only need to read files
@@ -81,6 +106,24 @@ if (!file.exists(opt$aseg)) stop(sprintf("aseg/aparc table not found: %s", opt$a
 # Read inputs
 qdec <- tryCatch(read.delim(opt$qdec, header=TRUE, sep="\t", stringsAsFactors=FALSE), error=function(e) NULL)
 if (is.null(qdec)) qdec <- read.table(opt$qdec, header=TRUE, stringsAsFactors=FALSE)
+
+coerce_numeric_like <- function(x) {
+  if (!is.character(x)) return(x)
+  stripped <- trimws(tolower(x))
+  stripped[stripped %in% c("", "na", "n/a", "nan", "null")] <- NA_character_
+  nums <- suppressWarnings(as.numeric(stripped))
+  if (any(!is.na(stripped) & is.na(nums))) {
+    return(x)
+  }
+  nums
+}
+
+if (nrow(qdec) > 0) {
+  for (nm in names(qdec)) {
+    qdec[[nm]] <- coerce_numeric_like(qdec[[nm]])
+  }
+}
+
 aseg <- read.table(opt$aseg, header=TRUE, stringsAsFactors=FALSE)
 
 # Standardize qdec id column
