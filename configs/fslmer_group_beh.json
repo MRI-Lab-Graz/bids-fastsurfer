@@ -1,0 +1,9 @@
+{
+  "qdec": "results/running_intervention/qdec.table.dat",
+  "aseg": "results/running_intervention/aseg.long.table",
+  "formula": "~ tp * factor(group_beh) + interv_2w + interv_4w + age + sex + EstimatedTotalIntraCranialVol",
+  "zcols": "1,2",
+  "outdir": "results/running_intervention/fslmer_group_beh",
+  "time_col": "tp",
+  "id_col": "Measure:volume"
+}

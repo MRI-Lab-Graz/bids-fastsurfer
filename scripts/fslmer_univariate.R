@@ -113,8 +113,10 @@ coerce_numeric_like <- function(x) {
   stripped[stripped %in% c("", "na", "n/a", "nan", "null")] <- NA_character_
   nums <- suppressWarnings(as.numeric(stripped))
   if (any(!is.na(stripped) & is.na(nums))) {
+    x[is.na(stripped)] <- NA_character_
     return(x)
   }
+  x[is.na(stripped)] <- NA
   nums
 }
 
@@ -153,7 +155,6 @@ if (nrow(dat) == 0) stop("Merged data is empty; check IDs")
 # Order and ni
 if (!time_col %in% names(dat)) stop(sprintf("time_col '%s' not found after merge", time_col))
 dat <- dat[order(dat$fsid_base, dat[[time_col]]), ]
-ni <- matrix(unname(table(dat$fsid_base)), ncol=1)
 
 # ROI selection
 multi_region <- isTRUE(opt$`all-regions`) || !is.null(opt$`region-pattern`)
@@ -187,20 +188,49 @@ if (multi_region) {
   rois_to_analyze <- opt$roi
 }
 
-analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
+analyze_roi <- function(roi_name, dat, opt, time_col) {
   if (!(roi_name %in% names(dat))) {
     roi2 <- gsub("-", ".", roi_name, fixed=TRUE)
     if (!(roi2 %in% names(dat))) return(list(error=sprintf("ROI '%s' not found", roi_name)))
     roi_name <- roi2
   }
-  Y <- matrix(dat[[roi_name]], ncol=1)
-  # Skip degenerate ROIs (no variance) or mostly missing
-  yvec <- as.numeric(dat[[roi_name]])
-  if (all(is.na(yvec)) || sd(yvec, na.rm=TRUE) == 0) {
-    return(list(error=sprintf("ROI '%s' has zero variance or all NA; skipped", roi_name)))
-  }
   form <- as.formula(opt$formula)
-  X <- model.matrix(form, dat)
+  needed_vars <- unique(c(all.vars(form), roi_name))
+  missing_vars <- setdiff(needed_vars, names(dat))
+  if (length(missing_vars)) {
+    return(list(error=sprintf("Missing columns for ROI '%s': %s", roi_name, paste(missing_vars, collapse=", "))))
+  }
+
+  keep_mask <- stats::complete.cases(dat[, needed_vars, drop=FALSE])
+  if (!any(keep_mask)) {
+    return(list(error=sprintf("ROI '%s' has no complete cases for required covariates", roi_name)))
+  }
+
+  dat_roi <- dat[keep_mask, , drop=FALSE]
+  dat_roi <- dat_roi[order(dat_roi$fsid_base, dat_roi[[time_col]]), , drop=FALSE]
+
+  ni_vec <- table(dat_roi$fsid_base)
+  if (any(ni_vec < 2)) {
+    keep_bases <- names(ni_vec)[ni_vec >= 2]
+    dat_roi <- dat_roi[dat_roi$fsid_base %in% keep_bases, , drop=FALSE]
+    if (!length(keep_bases)) {
+      return(list(error=sprintf("ROI '%s' lacks subjects with >=2 timepoints after filtering", roi_name)))
+    }
+    ni_vec <- table(dat_roi$fsid_base)
+  }
+
+  yvec <- as.numeric(dat_roi[[roi_name]])
+  if (all(is.na(yvec)) || sd(yvec, na.rm=TRUE) == 0) {
+    return(list(error=sprintf("ROI '%s' has zero variance or all NA after filtering; skipped", roi_name)))
+  }
+  Y <- matrix(yvec, ncol=1)
+
+  X <- model.matrix(form, dat_roi)
+  if (nrow(X) != nrow(Y)) {
+    return(list(error=sprintf("Design/response mismatch for ROI '%s': %d rows in X vs %d in Y", roi_name, nrow(X), nrow(Y))))
+  }
+
+  ni_local <- matrix(as.integer(ni_vec), ncol=1)
   # Compact progress indicator
   if (!isTRUE(opt$quiet)) cat(sprintf("%s: ", roi_name))
   flush.console()
@@ -212,20 +242,20 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
       if (!requireNamespace("fslmer", quietly=TRUE)) return(list(error="Package 'fslmer' is required for --engine fslmer"))
       zcols <- if (is.numeric(opt$zcols)) as.integer(opt$zcols) else as.integer(strsplit(opt$zcols, ",")[[1]])
       if (any(is.na(zcols))) return(list(error="--zcols must be integers"))
-      function() fslmer::lme_fit_FS(X, zcols, Y, ni)
+      function() fslmer::lme_fit_FS(X, zcols, Y, ni_local)
     },
     glm = {
-      dat$y <- as.numeric(dat[[roi_name]])
+      dat_roi$y <- as.numeric(dat_roi[[roi_name]])
       fam <- tryCatch(get(opt$family, mode="function"), error=function(e) NULL)
       if (is.null(fam)) fam <- gaussian
       fam <- fam()
-      function() stats::glm(update(form, y ~ .), data=dat, family=fam)
+      function() stats::glm(update(form, y ~ .), data=dat_roi, family=fam)
     },
     gam = {
       if (!requireNamespace("mgcv", quietly=TRUE)) return(list(error="Package 'mgcv' is required for --engine gam"))
-      dat$y <- as.numeric(dat[[roi_name]])
+      dat_roi$y <- as.numeric(dat_roi[[roi_name]])
       # Ensure time variable is numeric for s(time). If not, try to coerce sensibly.
-      tp_raw <- dat[[time_col]]
+      tp_raw <- dat_roi[[time_col]]
       if (!is.numeric(tp_raw)) {
         # Try to extract numeric part (e.g., ses-1 -> 1)
         tp_num <- suppressWarnings(as.numeric(gsub("[^0-9]+", "", as.character(tp_raw))))
@@ -235,10 +265,10 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
           f <- factor(tp_raw, levels=lev, ordered=TRUE)
           tp_num <- as.numeric(f)
         }
-        dat[[time_col]] <- tp_num
+        dat_roi[[time_col]] <- tp_num
       }
       # After coercion, validate there are at least 2 unique time points
-      uniq_t <- length(unique(dat[[time_col]][!is.na(dat[[time_col]])]))
+      uniq_t <- length(unique(dat_roi[[time_col]][!is.na(dat_roi[[time_col]])]))
       if (uniq_t < 2) return(list(error=sprintf("Not enough unique values in '%s' for GAM (need >=2)", time_col)))
       fam <- tryCatch(get(opt$family, mode="function"), error=function(e) NULL)
       if (is.null(fam)) fam <- gaussian
@@ -252,7 +282,7 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
       gform <- as.formula(base_form)
       function() {
         # Try with chosen k; if the common mgcv error about unique covariate combinations occurs, reduce k and retry
-        fit <- try(mgcv::gam(gform, data=dat, family=fam, method="REML"), silent=TRUE)
+        fit <- try(mgcv::gam(gform, data=dat_roi, family=fam, method="REML"), silent=TRUE)
         if (inherits(fit, "try-error")) {
           msg_txt <- as.character(fit)
           if (grepl("fewer unique covariate combinations", msg_txt, fixed=TRUE)) {
@@ -260,7 +290,7 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
             if (k_fallback < k_time) {
               gform_fb <- as.formula(paste0("y ~ s(", time_col, ", k=", k_fallback, ")", if (!isTRUE(opt$`no-gam-re`)) "+ s(fsid_base, bs='re')" else ""))
               if (!isTRUE(opt$quiet) && isTRUE(opt$debug)) cat(sprintf("[GAM] Retrying with k=%d due to limited unique values\n", k_fallback))
-              return(mgcv::gam(gform_fb, data=dat, family=fam, method="REML"))
+              return(mgcv::gam(gform_fb, data=dat_roi, family=fam, method="REML"))
             }
           }
           stop(attr(fit, "condition")$message)
@@ -288,7 +318,7 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
 
   res <- tryCatch({
     fit <- run_fit()
-    out <- list(roi=roi_name, engine=engine, X=X, Y=Y)
+    out <- list(roi=roi_name, engine=engine, X=X, Y=Y, ni=ni_local)
     if (engine == "fslmer") {
       F_C <- NULL; Cvec <- NULL
       if (!is.null(opt$contrast)) {
@@ -297,7 +327,7 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
         C <- matrix(Cvec, nrow=1)
         F_C <- fslmer::lme_F(fit, C)
       }
-      out$stats <- fit; out$F_C <- F_C; out$Cvec <- Cvec
+      out$stats <- fit; out$F_C <- F_C; out$Cvec <- Cvec; out$zcols <- zcols
     } else if (engine == "glm") {
       out$glm <- fit
     } else if (engine == "gam") {
@@ -311,7 +341,7 @@ analyze_roi <- function(roi_name, dat, ni, opt, time_col) {
 
 results <- list(); failed <- character(0)
 for (roi in rois_to_analyze) {
-  r <- analyze_roi(roi, dat, ni, opt, time_col)
+  r <- analyze_roi(roi, dat, opt, time_col)
   if (!is.null(r$error)) { cat("ERROR:", r$error, "\n"); failed <- c(failed, roi); next }
   results[[roi]] <- r
 }

@@ -193,6 +193,12 @@ def build_qdec_rows(
         return None
 
     rows: List[List[str]] = []
+    skipped_missing_sex: List[str] = []
+    missing_tokens = {"", "na", "n/a", "nan", "null"}
+    sex_col_idx: Optional[int] = None
+    if "sex" in cols_to_include:
+        sex_col_idx = cols_to_include.index("sex")
+
     for fsid, base, ses in timepoints:
         r = find_row(base, ses)
         if r is None:
@@ -204,6 +210,13 @@ def build_qdec_rows(
             values = ["n/a" for _ in cols_to_include]
         else:
             values = [r.get(c, "n/a") for c in cols_to_include]
+
+        if sex_col_idx is not None:
+            sex_value = values[sex_col_idx]
+            norm_sex = str(sex_value).strip().lower() if sex_value is not None else None
+            if norm_sex is None or norm_sex in missing_tokens:
+                skipped_missing_sex.append(fsid)
+                continue
 
         tp = session_to_tp(ses)
         tp_str = str(tp) if tp is not None else "n/a"
@@ -219,6 +232,13 @@ def build_qdec_rows(
         return (base, tp_val, row[0])
 
     rows.sort(key=sort_key)
+    if skipped_missing_sex:
+        limit = 10
+        sample = ", ".join(skipped_missing_sex[:limit])
+        more = " ..." if len(skipped_missing_sex) > limit else ""
+        print(
+            f"Skipped {len(skipped_missing_sex)} timepoints due to missing/invalid sex values: {sample}{more}"
+        )
     return header, rows
 
 
