@@ -1,0 +1,29 @@
+{
+  "subjects_dir": "/data/local/129_PK01/derivatives/fastsurfer",
+  "participants": "configs/participants.tsv",
+  "bids_root": "/data/mrivault/_0_STAGING/129_PK01/rawdata",
+  "out_root": "results/running_intervention_inline",
+  "qdec": "results/running_intervention_inline/qdec.table.dat",
+  "aseg": "results/running_intervention_inline/aseg.long.table",
+  "time_col": "tp",
+  "id_col": "Measure.volume",
+  "link_long": true,
+  "skip_aseg": false,
+  "no_summaries": false,
+  "models": [
+    {
+      "id": "first_model",
+      "formula": "~ factor(tp) * group_5 + age + sex + EstimatedTotalIntraCranialVol",
+      "zcols": "RIRS"
+    },
+    {
+      "id": "second_model",
+      "formula": "~ factor(tp) * group_5 + age",
+      "zcols": "RI"
+    }
+  ],
+  "effects": {
+    "first_model": ["tp2", "tp3", "sex", "age"],
+    "second_model": ["tp2", "tp3", "age"]
+  }
+}

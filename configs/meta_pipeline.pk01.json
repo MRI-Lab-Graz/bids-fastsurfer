@@ -1,0 +1,13 @@
+{
+  "subjects_dir": "/data/local/129_PK01/derivatives/fastsurfer",
+  "participants": "configs/participants.tsv",
+  "bids_root": "/data/mrivault/_0_STAGING/129_PK01/rawdata",
+  "out_root": "results/running_intervention",
+  "models": ["group5_factor_time"],
+  "model_map": {
+    "group5_factor_time": "configs/fslmer_group5_factor_time.json"
+  },
+  "link_long": true,
+  "skip_aseg": false,
+  "no_summaries": false
+}

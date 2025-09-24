@@ -74,6 +74,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--link-dry-run", action="store_true", help="Print the symlink actions without making changes")
     p.add_argument("--link-force", action="store_true", help="If an existing symlink points elsewhere, replace it (does not delete real directories)")
     p.add_argument("--aseg", action="store_true", help="After writing QDEC, run asegstats2table and store aseg.long.table alongside it")
+    p.add_argument("--skip-sub", default=None, help="Comma-separated fsid_base IDs to skip (exclude) from QDEC")
+    p.add_argument("--skip-file", type=Path, default=None, help="File with fsid_base IDs (one per line) to skip from QDEC")
     return p.parse_args(argv)
 
 
@@ -167,6 +169,7 @@ def build_qdec_rows(
     session_col: Optional[str],
     include_columns: Optional[List[str]],
     strict: bool,
+    skip_set: Optional[Set[str]] = None,
 ) -> Tuple[List[str], List[List[str]]]:
     # Normalize include columns
     available_cols = set(participants_rows[0].keys()) if participants_rows else set()
@@ -200,9 +203,13 @@ def build_qdec_rows(
         sex_col_idx = cols_to_include.index("sex")
 
     for fsid, base, ses in timepoints:
+        if skip_set and base in skip_set:
+            continue
         r = find_row(base, ses)
         if r is None:
-            if strict:
+                if skip_set and base in skip_set:
+                    continue
+                r = find_row(base, ses)
                 raise ValueError(
                     f"No participants.tsv row found for subject {base} session {ses!r}"
                 )

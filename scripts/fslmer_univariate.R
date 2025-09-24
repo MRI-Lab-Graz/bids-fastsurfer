@@ -16,7 +16,7 @@ option_list <- list(
   make_option(c("-a", "--aseg"), type="character", help="Path to aseg/aparc long table (TSV/whitespace)"),
   make_option(c("-r", "--roi"), type="character", help="ROI column name in aseg/aparc table (e.g., Left.Hippocampus)"),
   make_option(c("-f", "--formula"), type="character", default="~ tp", help="Model formula for fixed effects (e.g., '~ tp*group') [default %default]"),
-  make_option(c("-z", "--zcols"), type="character", default="1,2", help="Comma-separated columns for random effects (e.g., '1,2' for intercept+time) [default %default]"),
+  make_option(c("-z", "--zcols"), type="character", default="1,2", help="Random-effects spec: either indices ('1,2' for intercept+time) or tokens RI/RIRS/RS (synonyms: RIFS->RI, FIRS->RS, FIFS->RI) [default %default]"),
   make_option(c("-c", "--contrast"), type="character", default=NULL, help="Comma-separated contrast vector (length must match ncol(X))"),
   make_option(c("-o", "--outdir"), type="character", default="fslmer_out", help="Output directory [default %default]"),
   make_option(c("--save-merged"), action="store_true", default=FALSE, help="Save merged dat as CSV"),
@@ -31,6 +31,8 @@ option_list <- list(
   make_option(c("--family"), type="character", default="gaussian", help="GLM/GAM family (gaussian, binomial, poisson, Gamma, etc.) [ignored for fslmer]"),
   make_option(c("--gam-k"), type="integer", default=NA, help="Basis dimension k for s(time) in GAM [default auto: min(5, unique time levels); must be >=2]"),
   make_option(c("--no-gam-re"), action="store_true", default=FALSE, help="Disable random intercept s(fsid_base, bs='re') in GAM"),
+  make_option(c("--add-baseline"), action="store_true", default=FALSE, help="Add per-ROI baseline covariate 'baseline_value' (value at first visit per subject) for use in the formula"),
+  make_option(c("--derive-group5"), action="store_true", default=FALSE, help="Derive covariates from group_5: interv (0/1), smallgroup (0/1), weeks4 (0/1), weeks (0/2/4)"),
   make_option(c("--debug"), action="store_true", default=FALSE, help="Print detailed optimizer logs from fslmer")
 )
 
@@ -51,7 +53,11 @@ if (!is.null(opt$config)) {
     contrast = NULL,
     outdir = "fslmer_out",
     time_col = NULL,
-    id_col = NULL
+    id_col = NULL,
+    region_pattern = NULL,
+    all_regions = FALSE,
+    add_baseline = FALSE,
+    derive_group5 = FALSE
   )
 
   apply_cfg <- function(name) {
@@ -80,6 +86,13 @@ if (!is.null(opt$config)) {
   opt$outdir   <- apply_cfg("outdir")
   opt$time_col <- apply_cfg("time_col")
   opt$id_col   <- apply_cfg("id_col")
+  # Region selection from JSON (supports region_pattern or region-pattern, all_regions)
+  rp <- cfg[["region_pattern"]]; if (is.null(rp)) rp <- cfg[["region-pattern"]]
+  if (!is.null(rp)) opt$`region-pattern` <- rp
+  ar <- cfg[["all_regions"]]; if (is.null(ar)) ar <- cfg[["all-regions"]]
+  if (!is.null(ar)) opt$`all-regions` <- isTRUE(ar)
+  opt$add_baseline <- isTRUE(apply_cfg("add_baseline"))
+  opt$derive_group5 <- isTRUE(apply_cfg("derive_group5"))
 }
 
 # For --print-cols we only need to read files
@@ -156,11 +169,22 @@ if (nrow(dat) == 0) stop("Merged data is empty; check IDs")
 if (!time_col %in% names(dat)) stop(sprintf("time_col '%s' not found after merge", time_col))
 dat <- dat[order(dat$fsid_base, dat[[time_col]]), ]
 
+# Optionally derive interpretable covariates from group_5 for intervention design decomposition
+if (isTRUE(opt$derive_group5) && ("group_5" %in% names(dat))) {
+  g5 <- as.character(dat$group_5)
+  is_na <- is.na(g5)
+  dat$interv <- as.integer(!is_na & g5 != "control")
+  dat$smallgroup <- as.integer(!is_na & grepl("^smallgroup", g5))
+  dat$weeks4 <- as.integer(!is_na & grepl("_4w$", g5))
+  dat$weeks <- ifelse(!is_na & grepl("_4w$", g5), 4L,
+                      ifelse(!is_na & grepl("_2w$", g5), 2L, 0L))
+}
+
 # ROI selection
 multi_region <- isTRUE(opt$`all-regions`) || !is.null(opt$`region-pattern`)
 rois_to_analyze <- NULL
 if (multi_region) {
-  exclude <- unique(c("fsid","fsid_base", time_col, names(qdec)))
+  exclude <- unique(c("fsid","fsid_base", time_col, names(qdec), id_col))
   brain_cols <- setdiff(names(dat), exclude)
   # Drop summary/global measures unless explicitly included
   if (!isTRUE(opt$`include-summary`)) {
@@ -182,6 +206,10 @@ if (multi_region) {
   } else {
     rois_to_analyze <- brain_cols[grepl(opt$`region-pattern`, brain_cols, ignore.case=TRUE, perl=TRUE)]
   }
+  # Always exclude analysis/design helper columns that are not brain ROIs
+  rois_to_analyze <- setdiff(rois_to_analyze, c(
+    "baseline_value", "interv", "smallgroup", "weeks4", "weeks"
+  ))
   if (!length(rois_to_analyze)) stop("No ROIs found to analyze")
 } else {
   if (is.null(opt$roi)) stop("ROI is required (or use --all-regions/--region-pattern)")
@@ -195,6 +223,24 @@ analyze_roi <- function(roi_name, dat, opt, time_col) {
     roi_name <- roi2
   }
   form <- as.formula(opt$formula)
+  # If requested or referenced in the formula, add per-subject baseline covariate for this ROI at the full-data level
+  if (isTRUE(opt$add_baseline) || ("baseline_value" %in% all.vars(form))) {
+    if (!("baseline_value" %in% names(dat))) {
+      tp_vec_all <- dat[[time_col]]
+      yvec_all <- suppressWarnings(as.numeric(dat[[roi_name]]))
+      bases_all <- unique(dat$fsid_base)
+      base_time_all <- tapply(tp_vec_all, dat$fsid_base, function(x) suppressWarnings(min(x, na.rm=TRUE)))
+      base_val_all <- vapply(bases_all, function(sb) {
+        idx <- which(dat$fsid_base == sb)
+        if (!length(idx)) return(NA_real_)
+        tmin <- base_time_all[[sb]]
+        if (is.infinite(tmin) || is.na(tmin)) return(NA_real_)
+        i_pick <- idx[which.min(abs(tp_vec_all[idx] - tmin))]
+        as.numeric(yvec_all[i_pick])
+      }, numeric(1))
+      dat$baseline_value <- as.numeric(setNames(base_val_all, bases_all)[dat$fsid_base])
+    }
+  }
   needed_vars <- unique(c(all.vars(form), roi_name))
   missing_vars <- setdiff(needed_vars, names(dat))
   if (length(missing_vars)) {
@@ -208,6 +254,8 @@ analyze_roi <- function(roi_name, dat, opt, time_col) {
 
   dat_roi <- dat[keep_mask, , drop=FALSE]
   dat_roi <- dat_roi[order(dat_roi$fsid_base, dat_roi[[time_col]]), , drop=FALSE]
+
+  # dat_roi already inherits baseline_value from dat if computed
 
   ni_vec <- table(dat_roi$fsid_base)
   if (any(ni_vec < 2)) {
@@ -240,8 +288,48 @@ analyze_roi <- function(roi_name, dat, opt, time_col) {
   fit_fn <- switch(engine,
     fslmer = {
       if (!requireNamespace("fslmer", quietly=TRUE)) return(list(error="Package 'fslmer' is required for --engine fslmer"))
-      zcols <- if (is.numeric(opt$zcols)) as.integer(opt$zcols) else as.integer(strsplit(opt$zcols, ",")[[1]])
-      if (any(is.na(zcols))) return(list(error="--zcols must be integers"))
+      # Determine zcols from indices or human-friendly spec
+      parse_zcols <- function(spec, X, time_col) {
+        cn <- colnames(X)
+        # helper to find time slope columns (main effect only)
+        time_idx <- integer(0)
+        # factor-coded time columns like factor(tp)2, factor(tp)3
+        fac_pat <- paste0("^factor\\(", gsub("[.\\[\\]\\^$]", "\\\\\\0", time_col), "\\)\\d+$")
+        m_fac <- grepl(fac_pat, cn, perl=TRUE)
+        if (any(m_fac)) {
+          time_idx <- which(m_fac)
+        } else {
+          # numeric/continuous time column named exactly time_col
+          m_num <- which(cn == time_col)
+          if (length(m_num)) time_idx <- m_num
+        }
+        spec_u <- toupper(trimws(as.character(spec)))
+        # If looks like indices, return parsed ints
+        if (grepl("^[0-9, ]+$", spec_u)) {
+          vals <- suppressWarnings(as.integer(strsplit(spec_u, ",")[[1]]))
+          return(vals)
+        }
+        # Map synonyms to canonical
+        spec_u <- switch(spec_u,
+          "RIFS" = "RI",
+          "FIFS" = "RI",   # no random effects in fslmer makes little sense; map to RI
+          "FIRS" = "RS",
+          spec_u
+        )
+        if (spec_u %in% c("RI", "RANDOM_INTERCEPT")) {
+          return(1L)
+        } else if (spec_u %in% c("RS", "RANDOM_SLOPE")) {
+          return(time_idx)
+        } else if (spec_u %in% c("RIRS", "RI+RS", "RI_RS", "RANDOM_INTERCEPT_RANDOM_SLOPE")) {
+          return(unique(c(1L, time_idx)))
+        } else {
+          # unknown token -> try to parse as integers anyway
+          vals <- suppressWarnings(as.integer(strsplit(spec_u, ",")[[1]]))
+          return(vals)
+        }
+      }
+      zcols <- if (is.numeric(opt$zcols)) as.integer(opt$zcols) else parse_zcols(opt$zcols, X, time_col)
+      if (length(zcols) == 0 || any(is.na(zcols))) return(list(error="--zcols must be indices or one of RI/RIRS/RS (synonyms: RIFS->RI, FIRS->RS, FIFS->RI)"))
       function() fslmer::lme_fit_FS(X, zcols, Y, ni_local)
     },
     glm = {
@@ -321,11 +409,21 @@ analyze_roi <- function(roi_name, dat, opt, time_col) {
     out <- list(roi=roi_name, engine=engine, X=X, Y=Y, ni=ni_local)
     if (engine == "fslmer") {
       F_C <- NULL; Cvec <- NULL
+      # Robust contrast parsing: accept NULL, character, numeric; ignore empty lists/objects
       if (!is.null(opt$contrast)) {
-        Cvec <- if (is.numeric(opt$contrast)) as.numeric(opt$contrast) else as.numeric(strsplit(opt$contrast, ",")[[1]])
-        if (length(Cvec) != ncol(X)) return(list(error=sprintf("Contrast length %d != ncol(X) %d", length(Cvec), ncol(X))))
-        C <- matrix(Cvec, nrow=1)
-        F_C <- fslmer::lme_F(fit, C)
+        if (is.character(opt$contrast)) {
+          parts <- strsplit(opt$contrast, ",")[[1]]
+          Cvec <- suppressWarnings(as.numeric(parts))
+        } else if (is.numeric(opt$contrast)) {
+          Cvec <- as.numeric(opt$contrast)
+        } else {
+          Cvec <- NULL
+        }
+        if (!is.null(Cvec)) {
+          if (length(Cvec) != ncol(X)) return(list(error=sprintf("Contrast length %d != ncol(X) %d", length(Cvec), ncol(X))))
+          C <- matrix(Cvec, nrow=1)
+          F_C <- fslmer::lme_F(fit, C)
+        }
       }
       out$stats <- fit; out$F_C <- F_C; out$Cvec <- Cvec; out$zcols <- zcols
     } else if (engine == "glm") {

@@ -120,10 +120,16 @@ for (i in seq_len(nrow(effect_rows))) {
   } else {
     "non-significant"
   }
-  roi_data <- dat[c("fsid", "fsid_base", "tp", "sex", roi)]
-  names(roi_data)[names(roi_data) == roi] <- "value"
-  roi_data <- roi_data[!is.na(roi_data$value) & !is.na(roi_data$tp), ]
-  n_subj <- length(unique(roi_data$fsid_base))
+  # Some effects (e.g., derived design columns) are not ROI columns in merged data; handle gracefully
+  if (roi %in% names(dat)) {
+    roi_data <- dat[c("fsid", "fsid_base", "tp", "sex", roi)]
+    names(roi_data)[names(roi_data) == roi] <- "value"
+    roi_data <- roi_data[!is.na(roi_data$value) & !is.na(roi_data$tp), ]
+    n_subj <- length(unique(roi_data$fsid_base))
+  } else {
+    roi_data <- data.frame()
+    n_subj <- length(unique(dat$fsid_base))
+  }
 
   plot_path <- NA_character_
   if (category == "significant" && nrow(roi_data) > 0) {

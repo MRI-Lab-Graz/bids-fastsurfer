@@ -1,0 +1,15 @@
+{
+  "qdec": "results/running_intervention/qdec.table.dat",
+  "aseg": "results/running_intervention/aseg.long.table",
+  "model_id": "group5_decomposed",
+  "roi": "Measure.volume,Left.Lateral.Ventricle,Left.Inf.Lat.Vent,Left.Cerebellum.White.Matter,Left.Cerebellum.Cortex,Left.Thalamus,Left.Caudate,Left.Putamen,Left.Pallidum,Brain.Stem,Left.Hippocampus,Left.Amygdala,Left.Accumbens.area,Left.VentralDC,Left.vessel,Left.choroid.plexus,Right.Lateral.Ventricle,Right.Inf.Lat.Vent,Right.Cerebellum.White.Matter,Right.Cerebellum.Cortex,Right.Thalamus,Right.Caudate,Right.Putamen,Right.Pallidum,Right.Hippocampus,Right.Amygdala,Right.Accumbens.area,Right.VentralDC,Right.vessel,Right.choroid.plexus",
+  "formula": "~ factor(tp) * (smallgroup + weeks4) + age + sex + EstimatedTotalIntraCranialVol + baseline_value",
+  "zcols": [1, 2],
+  "contrast": {},
+  "outdir": "results/running_intervention/fslmer_group5_decomposed",
+  "time_col": "tp",
+  "id_col": "Measure.volume",
+  "multi_region": true,
+  "add_baseline": true,
+  "derive_group5": true
+}

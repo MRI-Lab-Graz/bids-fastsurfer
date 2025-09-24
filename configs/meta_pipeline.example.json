@@ -1,0 +1,24 @@
+{
+  "subjects_dir": "/path/to/derivatives/fastsurfer",
+  "participants": "configs/participants.tsv",
+  "bids_root": "/path/to/BIDS",  
+  "out_root": "results/running_intervention",
+  "models": ["group5_factor_time"],
+  "link_long": true,
+  "skip_aseg": false,
+  "no_summaries": false,
+  "effects": {
+    "group5_factor_time": [
+      "group_5alone_4w", "group_5smallgroup_2w", "group_5smallgroup_4w", "group_5control",
+      "factor(tp)2", "factor(tp)3",
+      "factor(tp)2:group_5alone_4w", "factor(tp)3:group_5alone_4w",
+      "factor(tp)2:group_5smallgroup_2w", "factor(tp)3:group_5smallgroup_2w",
+      "factor(tp)2:group_5smallgroup_4w", "factor(tp)3:group_5smallgroup_4w",
+      "factor(tp)2:group_5control", "factor(tp)3:group_5control",
+      "sexM", "age"
+    ]
+  },
+  "model_map": {
+    "group5_factor_time": "configs/fslmer_group5_factor_time.json"
+  }
+}
