@@ -297,6 +297,10 @@ bash bids_long_fastsurfer.sh /path/to/BIDS /path/to/derivatives/fastsurfer_long 
 - GPU access inside Singularity
 	- These wrappers pass `--nv`. Ensure the host has NVIDIA drivers and the container supports GPU.
 
+### Headless servers and fsqc surfaces
+
+- On servers without a graphical display (`DISPLAY` not set), the fsqc "surfaces" module requires OpenGL and will fail with a GLFW error. Our prep script automatically disables fsqc surfaces when it detects no DISPLAY and will log an info message. You can still generate headless-friendly outputs by enabling screenshots/metrics (e.g., `--qc --qc-screenshots --qc-html`).
+
 ## Tips
 
 - Start with `--dry_run --debug` to inspect the constructed commands.

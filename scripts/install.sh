@@ -10,7 +10,7 @@ set -euo pipefail
 #
 # Usage:
 #   bash scripts/install.sh [--use-specs] [--no-compilers] [--pkgs-dir DIR] [--tmpdir DIR]
-#                           [--auto-apt] [--env fastsurfer-r] [--r 4.5]
+#                           [--auto-apt] [--env fastsurfer-r] [--r 4.5] [--no-fsqc]
 #
 # Notes:
 # - --auto-apt will attempt to apt-get install missing CLI tools on Debian/Ubuntu with sudo
@@ -26,6 +26,7 @@ TMP_DIR=""
 AUTO_APT=0
 ENV_NAME="fastsurfer-r"
 R_VERSION=""
+NO_FSQC=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,8 +37,19 @@ while [[ $# -gt 0 ]]; do
     --auto-apt) AUTO_APT=1; shift ;;
     --env) ENV_NAME="${2:-}"; shift 2 ;;
     --r) R_VERSION="${2:-}"; shift 2 ;;
+    --no-fsqc) NO_FSQC=1; shift ;;
     -h|--help)
-      echo "Usage: bash scripts/install.sh [--use-specs] [--no-compilers] [--pkgs-dir DIR] [--tmpdir DIR] [--auto-apt] [--env NAME] [--r VERSION]"
+      echo "Usage: bash scripts/install.sh [--use-specs] [--no-compilers] [--pkgs-dir DIR] [--tmpdir DIR] [--auto-apt] [--env NAME] [--r VERSION] [--no-fsqc]"
+      echo
+      echo "Options:"
+      echo "  --use-specs       Use explicit conda specs (env lock) instead of environment.yml"
+      echo "  --no-compilers    Skip adding C/C++/Fortran compilers"
+      echo "  --pkgs-dir DIR    Point micromamba to an existing packages cache"
+      echo "  --tmpdir DIR      Use a specific temp directory for downloads"
+      echo "  --auto-apt        Attempt to apt-get missing shell tools (Linux only; requires sudo)"
+      echo "  --env NAME        Micromamba environment name (default: fastsurfer-r)"
+      echo "  --r VERSION       R version override (default from environment.yml)"
+  echo "  --no-fsqc         Skip installing fsqc into the micromamba env (default: install)"
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
@@ -83,11 +95,28 @@ echo "[install] Running: ${CMD[*]}"
 "${CMD[@]}"
 
 echo
+if [[ "$NO_FSQC" -eq 0 ]]; then
+  echo "[install] Installing fsqc (Deep-MI) into the micromamba environment ($ENV_NAME)"
+  # Use python/pip inside the activated env; the setup script printed activation guidance above.
+  # We'll temporarily activate to install fsqc.
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/mamba_activate.sh"
+  python -m pip install --upgrade pip wheel setuptools
+  python -m pip install fsqc
+  echo "[install] fsqc installed into $ENV_NAME. 'run_fsqc' should now be available after activation."
+else
+  echo "[install] Skipping fsqc installation (--no-fsqc). You can later install with:"
+  echo "  source scripts/mamba_activate.sh && python -m pip install fsqc"
+fi
+
+echo
 echo "[install] Done. Activate the environment with:"
 echo "  source scripts/mamba_activate.sh"
 echo "Then verify R in the env:"
 echo "  which Rscript"
 echo "  Rscript -e 'pkgs <- c(\"optparse\",\"jsonlite\",\"mgcv\",\"checkmate\",\"bettermc\",\"fslmer\"); print(sapply(pkgs, requireNamespace, quietly=TRUE))'"
+echo "Optionally verify fsqc is available:"
+echo "  run_fsqc --help"
 echo "Quick help for the analysis script:"
 echo "  Rscript scripts/fslmer_univariate.R --help"
 echo "Deactivate later with:"

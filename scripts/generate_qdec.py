@@ -207,13 +207,11 @@ def build_qdec_rows(
             continue
         r = find_row(base, ses)
         if r is None:
-                if skip_set and base in skip_set:
-                    continue
-                r = find_row(base, ses)
+            if strict:
                 raise ValueError(
                     f"No participants.tsv row found for subject {base} session {ses!r}"
                 )
-            # fill NA values
+            # fill NA values when not strict
             values = ["n/a" for _ in cols_to_include]
         else:
             values = [r.get(c, "n/a") for c in cols_to_include]
@@ -508,6 +506,22 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"- {fn}")
         return 0
     timepoints = scan_subjects_dir(args.subjects_dir)
+    # Build skip set from CLI options
+    skip_set: Set[str] = set()
+    if args.skip_sub:
+        for tok in str(args.skip_sub).split(","):
+            tok = tok.strip()
+            if tok:
+                skip_set.add(tok)
+    if args.skip_file and args.skip_file.exists():
+        try:
+            with args.skip_file.open("r") as fh:
+                for line in fh:
+                    tok = line.strip()
+                    if tok and not tok.startswith("#"):
+                        skip_set.add(tok)
+        except Exception as e:
+            print(f"[WARN] Failed reading --skip-file {args.skip_file}: {e}", file=sys.stderr)
     header, rows = build_qdec_rows(
         timepoints,
         participants_rows,
@@ -515,7 +529,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         session_col,
         args.include_columns,
         args.strict,
+        skip_set=skip_set or None,
     )
+    if skip_set:
+        print(f"[INFO] Skipped subjects (fsid-base) provided: {len(skip_set)}")
     # set list limit globally for summary printing
     setattr(sys.modules[__name__], "_LIST_LIMIT", max(0, int(args.list_limit)))
 

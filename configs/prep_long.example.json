@@ -1,0 +1,25 @@
+{
+  "participants": "/path/to/participants.tsv",
+  "subjects_dir": "/path/to/derivatives/fastsurfer",
+  "output": "results/full_prep/qdec.table.dat",
+
+  "include_columns": ["sex", "age", "group"],
+  "strict": false,
+  "list_limit": 20,
+
+  "aseg": true,
+  "aparc": true,
+  "aparc_parc": "aparc", 
+  "aparc_measures": ["thickness", "area", "volume"],
+  "aparc_hemis": ["lh", "rh"],
+
+  "surf": true,
+  "surf_target": "fsaverage",
+  "surf_measures": ["thickness"],
+  "surf_hemis": ["lh", "rh"],
+  "smooth": [5, 10, 15, 20],
+  "surf_outdir": "results/full_prep/surf",
+
+  "skip_sub": "sub-0001,sub-0002",
+  "skip_file": "configs/skip_subjects.txt"
+}

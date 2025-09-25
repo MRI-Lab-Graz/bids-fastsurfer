@@ -72,6 +72,13 @@ if [[ -n "$FREESURFER_HOME" ]]; then
 fi
 
 # Avoid renv autoloader and user/site profiles interfering in this env
+# Ensure pip-installed console scripts in this env are on PATH (micromamba sets this, but we enforce it)
+ENV_BIN_DIR="$ENV_PREFIX/bin"
+case ":$PATH:" in
+  *":$ENV_BIN_DIR:"*) : ;;
+  *) export PATH="$ENV_BIN_DIR:$PATH" ;;
+esac
+
 export RENV_CONFIG_AUTOLOADER_ENABLED=false
 # Disable reading of user and site profiles; users can still run R without wrapper if needed
 export R_PROFILE_USER=

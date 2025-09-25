@@ -2,6 +2,8 @@ name: fastsurfer-r
 channels:
   - conda-forge
 dependencies:
+  - python=3.10
+  - pip
   - r-base=4.5
   - make
   - c-compiler
