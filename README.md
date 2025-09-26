@@ -14,6 +14,10 @@ The scripts are designed to behave like lightweight BIDS apps: you pass the inpu
 - FastSurfer GPU Singularity image (`.sif`)
 - A valid FreeSurfer license file
 
+Additionally for the R analysis environment (this repo includes an installer under `scripts/install.sh`):
+- A local FreeSurfer installation is required and must be discoverable via `FREESURFER_HOME` (the installer will stop if not found).
+- Several GB of free space for the micromamba env, package cache, and temporary downloads.
+
 Quick checks:
 
 ```zsh
@@ -82,6 +86,46 @@ PY
 ```
 
 After downloading, use the dataset root directories (`/path/to/BIDS-ds004937` or `/path/to/BIDS-ds004965`) as `<BIDS_ROOT>` in the examples below.
+
+## Install the analysis environment (R + fsqc)
+
+Use `scripts/install.sh` to create a micromamba environment with R packages and fsqc. FreeSurfer must be installed locally and `FREESURFER_HOME` should point to it (the installer will stop if it cannot find FreeSurfer; you can override with `--allow-no-fs` if you know what you’re doing).
+
+Basic usage
+- Standard install (requires FreeSurfer):
+	- `bash scripts/install.sh`
+- Low-storage install (put cache/tmp on a large disk and skip compilers):
+	- `bash scripts/install.sh --no-compilers --pkgs-dir /big/.mamba-cache --tmpdir /big/tmp`
+
+Expert usage
+- Custom environment name and R version:
+	- `bash scripts/install.sh --env my-r-env --r 4.5`
+- Proceed without FreeSurfer (advanced; FS-dependent features won’t work):
+	- `bash scripts/install.sh --allow-no-fs`
+- Auto-install missing CLI prerequisites on Debian/Ubuntu:
+	- `bash scripts/install.sh --auto-apt`
+
+Options (with examples)
+- `--env NAME` — Environment name (default: `fastsurfer-r`).
+- `--r VERSION` — R version override; default comes from `environment.yml`.
+- `--no-fsqc` — Skip installing fsqc into the env. You can add later: `source scripts/mamba_activate.sh && python -m pip install fsqc`.
+- `--no-compilers` — Skip C/C++/Fortran compilers to save space.
+- `--pkgs-dir DIR` — Package cache directory. Example: `--pkgs-dir /data/cache/.mamba-cache`.
+- `--tmpdir DIR` — Temporary downloads directory. Example: `--tmpdir /data/tmp`.
+- `--min-tmp-gb N` — Require at least N GB free in TMPDIR (default: 3). Example: `--min-tmp-gb 5`.
+- `--min-cache-gb N` — Require at least N GB free in package cache (default: 5). Example: `--min-cache-gb 8`.
+- `--require-fs` (default) — Fail if FreeSurfer is not detected.
+- `--allow-no-fs` — Proceed without FreeSurfer (not recommended).
+- `--auto-apt` — apt-get missing tools (`curl`, `tar`, `grep`, `awk`, `sed`, `head`) on Debian/Ubuntu.
+- `--use-specs` — Use explicit conda specs instead of `environment.yml`.
+
+After installation
+- Activate: `source scripts/mamba_activate.sh`
+- Verify tools: `which Rscript` and `run_fsqc --help`
+- Ensure FreeSurfer is active: set `FREESURFER_HOME` and source `SetUpFreeSurfer.sh` if not already done by your environment.
+
+Headless servers note
+- fsqc’s surfaces module needs a graphical display (OpenGL). If no `DISPLAY` is set, `scripts/prep_long.py` automatically disables fsqc surfaces and logs an info message. Screenshots + HTML work headlessly.
 
 ## Configuration: `fastsurfer_options.json`
 

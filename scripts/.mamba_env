@@ -1,2 +1,2 @@
-MAMBA_ROOT_PREFIX="/home/mri/.local/micromamba"
+MAMBA_ROOT_PREFIX="/data/local/tmp_big/micromamba-root"
 ENV_NAME="fastsurfer-r"

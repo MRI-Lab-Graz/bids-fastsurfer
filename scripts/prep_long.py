@@ -80,14 +80,20 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     p = argparse.ArgumentParser(description="Prepare longitudinal QDEC and optional aseg/aparc tables", parents=[p0])
     p.add_argument("--participants", required=True, type=Path, help="Path to BIDS participants.tsv")
-    p.add_argument("--subjects-dir", required=True, type=Path, help="Path to FastSurfer/FreeSurfer subjects directory")
+    p.add_argument(
+        "--subjects-dir",
+        required=True,
+        type=Path,
+        help="Path to FastSurfer/FreeSurfer subjects directory",
+    )
     p.add_argument(
         "--output",
         type=Path,
-        default=Path("qdec.table.dat"),
+        default=Path("results"),
         help=(
-            "Output Qdec TSV file (default: qdec.table.dat). "
-            "If a directory path is provided, the file 'qdec.table.dat' will be created inside it."
+            "Output directory (default: results). The QDEC file 'qdec.table.dat' and other outputs"
+            " (aseg/aparc tables, surf, fsqc) will be written under this folder. For backwards"
+            " compatibility, a file path ending in .dat/.tsv/.table is also accepted."
         ),
     )
     p.add_argument("--participant-column", default="participant_id", help="Column name for participant id (default: participant_id)")
@@ -1067,8 +1073,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.participants.exists():
         print(f"ERROR: participants.tsv not found: {args.participants}", file=sys.stderr)
         return 2
-    if not args.subjects_dir.exists() or not args.subjects_dir.is_dir():
-        print(f"ERROR: subjects_dir not found or not a directory: {args.subjects_dir}", file=sys.stderr)
+    subj_dir: Path = args.subjects_dir
+    if not subj_dir.exists() or not subj_dir.is_dir():
+        print(f"ERROR: subjects_dir not found or not a directory: {subj_dir}", file=sys.stderr)
         return 2
 
     fieldnames, participants_rows, participant_col, session_col = read_participants(
@@ -1079,7 +1086,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         for fn in fieldnames:
             print(f"- {fn}")
         return 0
-    timepoints = scan_subjects_dir(args.subjects_dir)
+    timepoints = scan_subjects_dir(subj_dir)
+    # Quick overview for the user: number of bases and timepoints
+    bases: Set[str] = set(tp[1] for tp in timepoints)
+    print(f"[INFO] Subjects overview: bases={len(bases)}, timepoints={len(timepoints)} in {subj_dir}")
 
     # Build skip set from CLI options
     skip_set: Set[str] = set()
@@ -1113,19 +1123,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     # set list limit globally for summary printing
     setattr(sys.modules[__name__], "_LIST_LIMIT", max(0, int(args.list_limit)))
 
-    # Resolve --output: if a directory was provided, place default filename inside it
-    out_path = args.output
+    # Resolve --output: treat as directory by default; support legacy file paths ending with known extensions
+    out_root = args.output
+    qdec_filename = "qdec.table.dat"
+    out_path: Path
     try:
-        if out_path.exists() and out_path.is_dir():
-            out_path = out_path / "qdec.table.dat"
-            print(f"[INFO] --output points to a directory; writing file to: {out_path}")
-        elif str(out_path).endswith(os.sep):
-            # Trailing slash suggests intent as directory even if it doesn't exist yet
-            out_path = out_path / "qdec.table.dat"
-            print(f"[INFO] --output looks like a directory; writing file to: {out_path}")
+        is_file_like = any(str(out_root).lower().endswith(ext) for ext in (".dat", ".tsv", ".table"))
+        if is_file_like:
+            # Backwards-compat: user provided a file path
+            out_path = out_root
+            out_root = out_path.parent if out_path.parent != Path("") else Path(".")
+            print(f"[INFO] --output looks like a file; will write QDEC to: {out_path}")
+        else:
+            # Directory semantics (preferred)
+            out_root.mkdir(parents=True, exist_ok=True)
+            out_path = out_root / qdec_filename
+            if not out_root.exists():
+                out_root.mkdir(parents=True, exist_ok=True)
+            print(f"[INFO] Output root: {out_root} (QDEC: {out_path})")
     except Exception:
-        # If os-level checks fail, proceed and let write_qdec handle parent creation and raise meaningful errors
-        pass
+        # Fallback: treat as file under current dir
+        out_path = Path(qdec_filename)
+        out_root = out_path.parent
 
     write_qdec(out_path, header, rows)
     print(f"Wrote Qdec file: {out_path}")
@@ -1143,7 +1162,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         eff_cfg = {
             "participants": str(args.participants),
-            "subjects_dir": str(args.subjects_dir),
+            "subjects_dir": str(subj_dir),
             "output": str(out_path),
             "participant_column": args.participant_column,
             "session_column": args.session_column,
@@ -1179,19 +1198,23 @@ def main(argv: Optional[List[str]] = None) -> int:
             "qc_skip_existing": bool(args.qc_skip_existing),
             "skip_sub": args.skip_sub,
             "skip_file": str(args.skip_file) if args.skip_file else None,
+            "summary": {
+                "bases": len(bases),
+                "timepoints": len(timepoints),
+            },
         }
-        cfg_out = out_path.parent / "prep_long.effective.json"
+    cfg_out = out_root / "prep_long.effective.json"
         with cfg_out.open("w") as fh:
             json.dump(eff_cfg, fh, indent=2, sort_keys=True)
         print(f"Wrote effective config: {cfg_out}")
     except Exception as e:
         print(f"[WARN] Failed to write effective config JSON: {e}", file=sys.stderr)
     # Optional consistency summary
-    summarize_consistency(args.bids, args.subjects_dir, participants_rows, participant_col, session_col, timepoints)
+    summarize_consistency(args.bids, subj_dir, participants_rows, participant_col, session_col, timepoints)
     # Optional FastSurfer .long symlink verification/creation for FreeSurfer tools compatibility
     if args.verify_long or args.link_long:
         verify_and_link_long(
-            args.subjects_dir,
+            subj_dir,
             timepoints,
             link=args.link_long,
             dry_run=args.link_dry_run,
@@ -1200,47 +1223,59 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Optional tables
     if args.aseg:
-        rc = run_asegstats2table(out_path, args.subjects_dir)
-        if rc != 0:
-            return rc
+        if shutil.which("asegstats2table") is None:
+            print("[WARN] asegstats2table not found in PATH; skipping --aseg. Ensure FreeSurfer is sourced.", file=sys.stderr)
+        else:
+            rc = run_asegstats2table(out_path, subj_dir)
+            if rc != 0:
+                return rc
     if args.aparc:
-        rc = run_aparcstats2table(
-            out_path,
-            args.subjects_dir,
-            parc=args.aparc_parc,
-            measures=args.aparc_measures,
-            hemis=args.aparc_hemis,
-        )
-        if rc != 0:
-            return rc
+        if shutil.which("aparcstats2table") is None:
+            print("[WARN] aparcstats2table not found in PATH; skipping --aparc. Ensure FreeSurfer is sourced.", file=sys.stderr)
+        else:
+            rc = run_aparcstats2table(
+                out_path,
+                subj_dir,
+                parc=args.aparc_parc,
+                measures=args.aparc_measures,
+                hemis=args.aparc_hemis,
+            )
+            if rc != 0:
+                return rc
     # Optional mass-univariate surface data
     if args.surf:
-        # Determine smoothing kernels list
-        smooth_list = _coerce_int_list(getattr(args, "smooth", None))
-        if not smooth_list:
-            # fallback to single kernel from --surf-fwhm
-            try:
-                smooth_list = [int(args.surf_fwhm)]
-            except Exception:
-                smooth_list = [10]
-        rc = run_surf_mass_univariate(
-            out_path,
-            args.subjects_dir,
-            target=str(args.surf_target),
-            measures=list(args.surf_measures),
-            hemis=list(args.surf_hemis),
-            smooth_kernels=smooth_list,
-            outdir=args.surf_outdir,
-            force=bool(args.force),
-        )
-        if rc != 0:
-            # do not fail the entire prep if surface prep tools missing; return code already logged
-            pass
+        have_mris = shutil.which("mris_preproc") is not None
+        have_surf2 = shutil.which("mri_surf2surf") is not None
+        if not (have_mris and have_surf2):
+            missing = [n for n, ok in (("mris_preproc", have_mris), ("mri_surf2surf", have_surf2)) if not ok]
+            print(f"[WARN] Missing FreeSurfer binaries ({', '.join(missing)}); skipping --surf.", file=sys.stderr)
+        else:
+            # Determine smoothing kernels list
+            smooth_list = _coerce_int_list(getattr(args, "smooth", None))
+            if not smooth_list:
+                # fallback to single kernel from --surf-fwhm
+                try:
+                    smooth_list = [int(args.surf_fwhm)]
+                except Exception:
+                    smooth_list = [10]
+            rc = run_surf_mass_univariate(
+                out_path,
+                subj_dir,
+                target=str(args.surf_target),
+                measures=list(args.surf_measures),
+                hemis=list(args.surf_hemis),
+                smooth_kernels=smooth_list,
+                outdir=args.surf_outdir,
+                force=bool(args.force),
+            )
+            if rc != 0:
+                # do not fail the entire prep if surface prep tools missing; return code already logged
+                pass
     # Optional fsqc QC
     if args.qc:
         _ = run_fsqc(
             out_path,
-            args.subjects_dir,
+            subj_dir,
             outdir=args.qc_output,
             pick_from=args.qc_from,
             fastsurfer=bool(args.qc_fastsurfer),
