@@ -138,8 +138,22 @@ def check_dependencies(args: argparse.Namespace) -> List[str]:
     
     # Check Python packages
     if args.qc:
-        if shutil.which("run_fsqc") is None:
-            missing.append("fsqc (Python package) - install with: bash scripts/install.sh (or pip install fsqc)")
+        # Check for fsqc - try both command and Python module import
+        fsqc_available = False
+        
+        # First try the run_fsqc command
+        if shutil.which("run_fsqc") is not None:
+            fsqc_available = True
+        else:
+            # If command not found, try importing the Python module
+            try:
+                import fsqc
+                fsqc_available = True
+            except ImportError:
+                pass
+        
+        if not fsqc_available:
+            missing.append("fsqc (Python package) - install with: bash scripts/install.sh")
     
     return missing
 
@@ -1062,10 +1076,19 @@ def run_fsqc(
     Selects subjects from the QDEC table (fsid or fsid-base). If pick_from=base, we pass unique fsid-base.
     Returns 0 on success or when fsqc is unavailable.
     """
+    # Try to find run_fsqc command
     fsqc_bin = shutil.which("run_fsqc")
     if not fsqc_bin:
-        print("[WARN] fsqc not found (run_fsqc). Skipping --qc step. Install with: bash scripts/install.sh (or pip install fsqc)", file=sys.stderr)
-        return 0
+        # If run_fsqc not in PATH, check if fsqc module is available and try to run it via python -m
+        try:
+            import fsqc
+            # Use python -m fsqc instead of run_fsqc command
+            fsqc_command = [sys.executable, "-m", "fsqc"]
+        except ImportError:
+            print("[WARN] fsqc not found (run_fsqc command or Python module). Skipping --qc step. Install with: bash scripts/install.sh", file=sys.stderr)
+            return 0
+    else:
+        fsqc_command = [fsqc_bin]
 
     out_root = outdir if outdir is not None else (qdec_path.parent / "fsqc")
     out_root.mkdir(parents=True, exist_ok=True)
@@ -1106,8 +1129,7 @@ def run_fsqc(
         print("[INFO] No DISPLAY detected; disabling fsqc surfaces module to avoid OpenGL errors.", file=sys.stderr)
         surfaces = False
 
-    cmd = [
-        fsqc_bin,
+    cmd = fsqc_command + [
         "--subjects_dir", str(subjects_dir),
         "--output_dir", str(out_root),
     ]

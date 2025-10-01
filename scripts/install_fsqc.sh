@@ -2,11 +2,19 @@
 set -euo pipefail
 
 # Deprecated: install_fsqc.sh
-# fsqc is now installed directly into the micromamba environment by scripts/install.sh.
+# fsqc is now automatically installed as part of the standard environment setup.
 # This stub remains only for backward compatibility and to provide guidance.
 
 echo "[DEPRECATED] scripts/install_fsqc.sh is no longer used."
-echo "Please run: bash scripts/install.sh (optionally with --no-fsqc to skip)."
-echo "After installation, activate the env and verify:"
-echo "  source scripts/mamba_activate.sh && run_fsqc --help"
+echo "fsqc is now installed automatically with the main environment."
+echo
+echo "To set up the complete environment including fsqc:"
+echo "  bash scripts/install.sh"
+echo
+echo "After installation, activate the environment and verify:"
+echo "  source scripts/mamba_activate.sh"
+echo "  run_fsqc --help"
+echo
+echo "If fsqc is missing from an existing environment, reinstall:"
+echo "  bash scripts/install.sh  # This will recreate the environment with fsqc"
 exit 1

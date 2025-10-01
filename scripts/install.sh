@@ -10,7 +10,7 @@ set -euo pipefail
 #
 # Usage:
 #   bash scripts/install.sh [--use-specs] [--no-compilers] [--pkgs-dir DIR] [--tmpdir DIR]
-#                           [--auto-apt] [--env fastsurfer-r] [--r 4.5] [--no-fsqc]
+#                           [--auto-apt] [--env fastsurfer-r] [--r 4.5]
 #
 # Notes:
 # - --auto-apt will attempt to apt-get install missing CLI tools on Debian/Ubuntu with sudo
@@ -26,7 +26,6 @@ TMP_DIR=""
 AUTO_APT=0
 ENV_NAME="fastsurfer-r"
 R_VERSION=""
-NO_FSQC=0
 # Precheck controls
 MIN_TMP_GB=3
 MIN_CACHE_GB=5
@@ -41,7 +40,6 @@ while [[ $# -gt 0 ]]; do
     --auto-apt) AUTO_APT=1; shift ;;
     --env) ENV_NAME="${2:-}"; shift 2 ;;
     --r) R_VERSION="${2:-}"; shift 2 ;;
-    --no-fsqc) NO_FSQC=1; shift ;;
     --min-tmp-gb) MIN_TMP_GB="${2:-3}"; shift 2 ;;
     --min-cache-gb) MIN_CACHE_GB="${2:-5}"; shift 2 ;;
   --require-fs) REQUIRE_FS=1; shift ;;
@@ -72,7 +70,6 @@ while [[ $# -gt 0 ]]; do
       echo "Options"
       echo "  --env NAME         Micromamba environment name (default: fastsurfer-r)"
       echo "  --r VERSION        R version override (default from environment.yml)"
-      echo "  --no-fsqc          Skip installing fsqc into the micromamba env (default: install)"
       echo "  --no-compilers     Skip C/C++/Fortran compilers to save space"
       echo "  --pkgs-dir DIR     Package cache directory (use a large, writable path)"
       echo "  --tmpdir DIR       Temporary directory for downloads (use a large, writable path)"
@@ -86,10 +83,6 @@ while [[ $# -gt 0 ]]; do
       echo "Examples"
       echo "  # Require FreeSurfer (default) and set stricter space thresholds"
       echo "  bash scripts/install.sh --min-tmp-gb 5 --min-cache-gb 8"
-      echo
-      echo "  # Install fsqc later inside the env"
-      echo "  bash scripts/install.sh --no-fsqc"
-      echo "  source scripts/mamba_activate.sh && python -m pip install fsqc"
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
@@ -212,31 +205,49 @@ echo "🚀 Setting up environment (this may take a while)..."
 "${CMD[@]}"
 
 echo
-if [[ "$NO_FSQC" -eq 0 ]]; then
-  echo "🧰 Installing fsqc into environment: $ENV_NAME"
-  # Use python/pip inside the activated env; the setup script printed activation guidance above.
-  # We'll temporarily activate to install fsqc.
-  # shellcheck disable=SC1091
-  source "$SCRIPT_DIR/mamba_activate.sh"
-  python -m pip install --upgrade pip wheel setuptools
+echo
+echo "🧰 Installing fsqc into environment: $ENV_NAME"
+# Use the micromamba environment Python directly to avoid PATH conflicts with FreeSurfer/FSL
+MAMBA_PYTHON="${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/bin/python"
+
+if [[ ! -f "$MAMBA_PYTHON" ]]; then
+  echo "❌ Python not found in micromamba environment: $MAMBA_PYTHON"
+  echo "Environment creation may have failed."
+  exit 1
+fi
+
+echo "  → Using Python: $MAMBA_PYTHON"
+echo "  → Upgrading pip, wheel, setuptools..."
+"$MAMBA_PYTHON" -m pip install --upgrade pip wheel setuptools
+
+# Install fsqc with recommended dependencies
+echo "  → Installing fsqc from PyPI..."
+"$MAMBA_PYTHON" -m pip install fsqc
+
+# Verify installation using the same Python
+echo "  → Verifying fsqc installation..."
+if "$MAMBA_PYTHON" -c "import fsqc; print('fsqc module imported successfully')" >/dev/null 2>&1; then
+  echo "✅ fsqc Python module installed successfully."
   
-  # Install fsqc with recommended dependencies
-  echo "  → Installing fsqc from PyPI..."
-  python -m pip install fsqc
-  
-  # Verify installation
-  if command -v run_fsqc >/dev/null 2>&1; then
-    echo "✅ fsqc installed successfully. 'run_fsqc' is available."
-    echo "  → Testing fsqc installation..."
-    run_fsqc --help >/dev/null 2>&1 && echo "  → fsqc help command works correctly." || echo "  ⚠️  fsqc installation may have issues."
+  # Check if run_fsqc command is available in the environment
+  RUN_FSQC_PATH="${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/bin/run_fsqc"
+  if [[ -f "$RUN_FSQC_PATH" ]]; then
+    echo "✅ run_fsqc command available at: $RUN_FSQC_PATH"
+    echo "  → Testing run_fsqc help..."
+    if "$RUN_FSQC_PATH" --help >/dev/null 2>&1; then
+      echo "  → run_fsqc help command works correctly."
+    else
+      echo "  ⚠️  run_fsqc command exists but help failed."
+    fi
   else
-    echo "❌ fsqc installation failed - 'run_fsqc' command not found."
-    echo "  You can manually install later with:"
-    echo "  source scripts/mamba_activate.sh && python -m pip install fsqc"
+    echo "  ⚠️  run_fsqc command not found at expected location."
+    echo "  → This may be normal - fsqc might use a different entry point."
   fi
 else
-  echo "ℹ️  Skipping fsqc installation (--no-fsqc). You can later install with:"
-  echo "  source scripts/mamba_activate.sh && python -m pip install fsqc"
+  echo "❌ fsqc installation failed - Python module not importable."
+  echo
+  echo "Installation failed. Please report this issue."
+  exit 1
 fi
 
 echo
@@ -245,7 +256,8 @@ echo "👉 Activate the environment:"
 echo "   source scripts/mamba_activate.sh"
 echo "👉 Verify tools:"
 echo "   which Rscript"
-echo "   run_fsqc --help"
+echo "   python -c 'import fsqc; print(\"fsqc available\")'"
+echo "   # Note: run_fsqc may require full path due to FreeSurfer/FSL PATH conflicts"
 echo "👉 R helper usage:"
 echo "   Rscript scripts/fslmer_univariate.R --help"
 echo "👉 Deactivate later:"
