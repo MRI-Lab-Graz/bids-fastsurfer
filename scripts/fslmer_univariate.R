@@ -129,6 +129,17 @@ option_list <- list(
              help="Reduce output verbosity"),
   make_option(c("--debug"), action="store_true", default=FALSE, 
              help="Enable detailed optimizer logs (fslmer only)"),
+  
+  # Statistical summary and visualization options
+  make_option(c("--alpha"), type="double", default=0.05, 
+             help="Significance threshold (p < alpha) [default: %default]"),
+  make_option(c("--trend"), type="double", default=0.1, 
+             help="Trend threshold (alpha <= p < trend) [default: %default]"),
+  make_option(c("--plot-results"), action="store_true", default=FALSE, 
+             help="Generate plots for significant and trend results"),
+  make_option(c("--no-summary"), action="store_true", default=FALSE, 
+             help="Skip statistical significance summary in terminal output"),
+  
   make_option(c("-h", "--help"), action="store_true", default=FALSE,
              help="Show this help message and exit")
 )

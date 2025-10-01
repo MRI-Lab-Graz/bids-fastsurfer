@@ -4,6 +4,7 @@ data/
 license.txt
 tmp*/*
 tmp*
+test*/
 results/
 fslmer_out/
 # Byte-compiled / optimized / DLL files

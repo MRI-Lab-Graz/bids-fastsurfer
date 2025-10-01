@@ -11,6 +11,7 @@ dependencies:
   - fortran-compiler
   - r-optparse
   - r-jsonlite
+  - r-ggplot2
   - r-mgcv
   - r-remotes
   - r-bh
