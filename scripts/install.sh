@@ -219,8 +219,21 @@ if [[ "$NO_FSQC" -eq 0 ]]; then
   # shellcheck disable=SC1091
   source "$SCRIPT_DIR/mamba_activate.sh"
   python -m pip install --upgrade pip wheel setuptools
+  
+  # Install fsqc with recommended dependencies
+  echo "  → Installing fsqc from PyPI..."
   python -m pip install fsqc
-  echo "✅ fsqc installed. 'run_fsqc' will be available after activation."
+  
+  # Verify installation
+  if command -v run_fsqc >/dev/null 2>&1; then
+    echo "✅ fsqc installed successfully. 'run_fsqc' is available."
+    echo "  → Testing fsqc installation..."
+    run_fsqc --help >/dev/null 2>&1 && echo "  → fsqc help command works correctly." || echo "  ⚠️  fsqc installation may have issues."
+  else
+    echo "❌ fsqc installation failed - 'run_fsqc' command not found."
+    echo "  You can manually install later with:"
+    echo "  source scripts/mamba_activate.sh && python -m pip install fsqc"
+  fi
 else
   echo "ℹ️  Skipping fsqc installation (--no-fsqc). You can later install with:"
   echo "  source scripts/mamba_activate.sh && python -m pip install fsqc"
