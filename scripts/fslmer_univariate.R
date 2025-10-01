@@ -16,7 +16,8 @@ option_list <- list(
   make_option(c("-a", "--aseg"), type="character", help="Path to aseg/aparc long table (TSV/whitespace)"),
   make_option(c("-r", "--roi"), type="character", help="ROI column name in aseg/aparc table (e.g., Left.Hippocampus)"),
   make_option(c("-f", "--formula"), type="character", default="~ tp", help="Model formula for fixed effects (e.g., '~ tp*group') [default %default]"),
-  make_option(c("-z", "--zcols"), type="character", default="1,2", help="Random-effects spec: either indices ('1,2' for intercept+time) or tokens RI/RIRS/RS (synonyms: RIFS->RI, FIRS->RS, FIFS->RI) [default %default]"),
+  make_option(c("--random-effects"), type="character", default=NULL, help="Random-effects structure: RI (random intercept), RS (random slope for time), RIRS (both); or explicit indices like '1,2'. This is the preferred flag; --zcols remains for backward compatibility."),
+  make_option(c("-z", "--zcols"), type="character", default="1,2", help="[Deprecated] Use --random-effects instead. Accepts indices ('1,2') or tokens RI/RIRS/RS (synonyms: RIFS->RI, FIRS->RS, FIFS->RI) [default %default]"),
   make_option(c("-c", "--contrast"), type="character", default=NULL, help="Comma-separated contrast vector (length must match ncol(X))"),
   make_option(c("-o", "--outdir"), type="character", default="fslmer_out", help="Output directory [default %default]"),
   make_option(c("--save-merged"), action="store_true", default=FALSE, help="Save merged dat as CSV"),
@@ -50,6 +51,7 @@ if (!is.null(opt$config)) {
     roi = NULL,
     formula = "~ tp",
     zcols = "1,2",
+    `random-effects` = NULL,
     contrast = NULL,
     outdir = "fslmer_out",
     time_col = NULL,
@@ -82,6 +84,7 @@ if (!is.null(opt$config)) {
   opt$roi      <- apply_cfg("roi")
   opt$formula  <- apply_cfg("formula")
   opt$zcols    <- apply_cfg("zcols")
+  opt$`random-effects` <- apply_cfg("random-effects")
   opt$contrast <- apply_cfg("contrast")
   opt$outdir   <- apply_cfg("outdir")
   opt$time_col <- apply_cfg("time_col")
@@ -93,6 +96,15 @@ if (!is.null(opt$config)) {
   if (!is.null(ar)) opt$`all-regions` <- isTRUE(ar)
   opt$add_baseline <- isTRUE(apply_cfg("add_baseline"))
   opt$derive_group5 <- isTRUE(apply_cfg("derive_group5"))
+
+  # Accept random-effects from JSON using underscore or hyphen key
+  re_json <- cfg[["random_effects"]]; if (is.null(re_json)) re_json <- cfg[["random-effects"]]
+  if (!is.null(re_json)) opt$`random-effects` <- re_json
+}
+
+# Prefer --random-effects over --zcols if provided
+if (!is.null(opt$`random-effects`) && nzchar(as.character(opt$`random-effects`))) {
+  opt$zcols <- opt$`random-effects`
 }
 
 # For --print-cols we only need to read files
@@ -329,7 +341,7 @@ analyze_roi <- function(roi_name, dat, opt, time_col) {
         }
       }
       zcols <- if (is.numeric(opt$zcols)) as.integer(opt$zcols) else parse_zcols(opt$zcols, X, time_col)
-      if (length(zcols) == 0 || any(is.na(zcols))) return(list(error="--zcols must be indices or one of RI/RIRS/RS (synonyms: RIFS->RI, FIRS->RS, FIFS->RI)"))
+      if (length(zcols) == 0 || any(is.na(zcols))) return(list(error="--random-effects (or --zcols) must be indices or one of RI/RIRS/RS (synonyms: RIFS->RI, FIRS->RS, FIFS->RI)"))
       function() fslmer::lme_fit_FS(X, zcols, Y, ni_local)
     },
     glm = {
@@ -493,7 +505,9 @@ if (multi_region) {
 resolved <- list(
   qdec=opt$qdec, aseg=opt$aseg,
   roi=if(multi_region) paste(rois_to_analyze, collapse=",") else opt$roi,
-  formula=opt$formula, zcols=if(length(results)) results[[1]]$zcols else NULL,
+  formula=opt$formula,
+  random_effects=if (!is.null(opt$`random-effects`)) opt$`random-effects` else NULL,
+  zcols=if(length(results)) results[[1]]$zcols else NULL,
   contrast=if(length(results) && !is.null(results[[1]]$Cvec)) results[[1]]$Cvec else NULL,
   outdir=outdir, time_col=time_col, id_col=id_col, multi_region=multi_region,
   n_rois_analyzed=length(results), n_rois_failed=length(failed)
