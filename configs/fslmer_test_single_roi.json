@@ -1,0 +1,11 @@
+{
+  "qdec": "results/running_intervention_inline/qdec.table.dat",
+  "aseg": "results/running_intervention_inline/aseg.long.table",
+  "roi": "Left.Hippocampus",
+  "formula": "~ tp*group_5",
+  "random-effects": "RIRS",
+  "outdir": "test_fslmer_single_roi",
+  "time_col": "tp",
+  "id_col": "Measure.volume",
+  "save_merged": true
+}

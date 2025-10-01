@@ -10,34 +10,140 @@ suppressPackageStartupMessages({
 
 # Flexible univariate LME analysis for aseg/aparc tables using fslmer
 
+# Create comprehensive help text with examples
+get_help_text <- function() {
+  help_text <- "
+DESCRIPTION:
+    Flexible univariate linear mixed-effects (LME) analysis for subcortical/cortical 
+    volume data from FreeSurfer/FastSurfer longitudinal processing. Supports single ROI 
+    or multi-region analysis with various statistical models (fslmer, GLM, GAM).
+
+USAGE:
+    # Single ROI analysis
+    Rscript fslmer_univariate.R --qdec qdec.table.dat --aseg aseg.long.table \\
+                                --roi Left.Hippocampus --formula '~ tp*group' \\
+                                --outdir results_hippo
+
+    # Multiple regions matching pattern
+    Rscript fslmer_univariate.R --qdec qdec.table.dat --aseg aseg.long.table \\
+                                --region-pattern 'Hippocampus|Amygdala' \\
+                                --formula '~ tp*group' --outdir results_limbic
+
+    # All brain regions analysis
+    Rscript fslmer_univariate.R --qdec qdec.table.dat --aseg aseg.long.table \\
+                                --all-regions --formula '~ tp' \\
+                                --outdir results_all
+
+    # Using configuration file
+    Rscript fslmer_univariate.R --config configs/fslmer_univariate.example.json
+
+    # Via bash wrapper (recommended)
+    bash scripts/run_fslmer_univariate.sh --help
+
+EXAMPLES:
+    # Basic longitudinal change
+    --formula '~ tp'
+    
+    # Group by time interaction
+    --formula '~ tp*group'
+    
+    # With baseline covariate
+    --add-baseline --formula '~ baseline_value + tp*group'
+    
+    # Multiple time points with quadratic
+    --formula '~ tp + I(tp^2)'
+
+    # GAM with smooth time effect
+    --engine gam --formula '~ s(tp)'
+
+INPUT FILES:
+    qdec.table.dat:     Subject metadata (TSV) with fsid, fsid_base, tp, group, etc.
+    aseg.long.table:    FreeSurfer longitudinal volume table with .long. identifiers
+
+OUTPUT:
+    {outdir}/results_summary.csv:     Summary statistics for all ROIs
+    {outdir}/models/{roi}_model.txt:  Individual model results per ROI
+    {outdir}/merged_data.csv:         Combined input data (if --save-merged)
+"
+  return(help_text)
+}
+
+# Create argument groups for better organization
 option_list <- list(
-  make_option(c("--config"), type="character", default=NULL, help="Path to JSON config file with arguments"),
-  make_option(c("-q", "--qdec"), type="character", help="Path to qdec.table.dat (TSV)"),
-  make_option(c("-a", "--aseg"), type="character", help="Path to aseg/aparc long table (TSV/whitespace)"),
-  make_option(c("-r", "--roi"), type="character", help="ROI column name in aseg/aparc table (e.g., Left.Hippocampus)"),
-  make_option(c("-f", "--formula"), type="character", default="~ tp", help="Model formula for fixed effects (e.g., '~ tp*group') [default %default]"),
-  make_option(c("--random-effects"), type="character", default=NULL, help="Random-effects structure: RI (random intercept), RS (random slope for time), RIRS (both); or explicit indices like '1,2'. This is the preferred flag; --zcols remains for backward compatibility."),
-  make_option(c("-z", "--zcols"), type="character", default="1,2", help="[Deprecated] Use --random-effects instead. Accepts indices ('1,2') or tokens RI/RIRS/RS (synonyms: RIFS->RI, FIRS->RS, FIFS->RI) [default %default]"),
-  make_option(c("-c", "--contrast"), type="character", default=NULL, help="Comma-separated contrast vector (length must match ncol(X))"),
-  make_option(c("-o", "--outdir"), type="character", default="fslmer_out", help="Output directory [default %default]"),
-  make_option(c("--save-merged"), action="store_true", default=FALSE, help="Save merged dat as CSV"),
-  make_option(c("--time-col"), type="character", default=NULL, help="Name of time variable in qdec; if NULL and 'tp' exists, uses 'tp'"),
-  make_option(c("--id-col"), type="character", default=NULL, help="Override ID column in aseg (default autodetect 'Measure:volume')"),
-  make_option(c("--print-cols"), action="store_true", default=FALSE, help="Print column names (and heads) of qdec and aseg then exit"),
-  make_option(c("--all-regions"), action="store_true", default=FALSE, help="Run analysis on all brain regions (subcortical volumes)"),
-  make_option(c("--region-pattern"), type="character", default=NULL, help="Regex to match ROI names (e.g., 'Hippocampus|Amygdala')"),
-  make_option(c("--quiet"), action="store_true", default=FALSE, help="Reduce output verbosity"),
-  make_option(c("--include-summary"), action="store_true", default=FALSE, help="Include global/summary volume measures in multi-region analysis"),
-  make_option(c("--engine"), type="character", default="fslmer", help="Model engine: 'fslmer' (default), 'glm', or 'gam'"),
-  make_option(c("--family"), type="character", default="gaussian", help="GLM/GAM family (gaussian, binomial, poisson, Gamma, etc.) [ignored for fslmer]"),
-  make_option(c("--gam-k"), type="integer", default=NA, help="Basis dimension k for s(time) in GAM [default auto: min(5, unique time levels); must be >=2]"),
-  make_option(c("--no-gam-re"), action="store_true", default=FALSE, help="Disable random intercept s(fsid_base, bs='re') in GAM"),
-  make_option(c("--add-baseline"), action="store_true", default=FALSE, help="Add per-ROI baseline covariate 'baseline_value' (value at first visit per subject) for use in the formula"),
-  make_option(c("--derive-group5"), action="store_true", default=FALSE, help="Derive covariates from group_5: interv (0/1), smallgroup (0/1), weeks4 (0/1), weeks (0/2/4)"),
-  make_option(c("--debug"), action="store_true", default=FALSE, help="Print detailed optimizer logs from fslmer")
+  # Required inputs
+  make_option(c("--config"), type="character", default=NULL, 
+             help="Path to JSON config file with arguments"),
+  make_option(c("-q", "--qdec"), type="character", 
+             help="Path to qdec.table.dat (TSV with subject metadata)"),
+  make_option(c("-a", "--aseg"), type="character", 
+             help="Path to aseg/aparc longitudinal table (TSV/whitespace format)"),
+  
+  # ROI selection (choose one approach)
+  make_option(c("-r", "--roi"), type="character", 
+             help="Single ROI column name (e.g., 'Left.Hippocampus')"),
+  make_option(c("--all-regions"), action="store_true", default=FALSE, 
+             help="Analyze all brain regions (excludes summary measures by default)"),
+  make_option(c("--region-pattern"), type="character", default=NULL, 
+             help="Regex pattern to match ROI names (e.g., 'Hippocampus|Amygdala')"),
+  make_option(c("--include-summary"), action="store_true", default=FALSE, 
+             help="Include global/summary volume measures in multi-region analysis"),
+  
+  # Statistical model configuration
+  make_option(c("-f", "--formula"), type="character", default="~ tp", 
+             help="Model formula for fixed effects (e.g., '~ tp*group') [default: %default]"),
+  make_option(c("--random-effects"), type="character", default=NULL, 
+             help="Random-effects structure: RI (random intercept), RS (random slope), RIRS (both), or indices '1,2'"),
+  make_option(c("-z", "--zcols"), type="character", default="1,2", 
+             help="[Deprecated] Use --random-effects instead. Random effects indices [default: %default]"),
+  make_option(c("-c", "--contrast"), type="character", default=NULL, 
+             help="Comma-separated contrast vector (length must match model coefficients)"),
+  make_option(c("--engine"), type="character", default="fslmer", 
+             help="Statistical engine: 'fslmer' (default), 'glm', or 'gam'"),
+  make_option(c("--family"), type="character", default="gaussian", 
+             help="GLM/GAM family: gaussian, binomial, poisson, etc. [ignored for fslmer]"),
+  
+  # Advanced model options
+  make_option(c("--add-baseline"), action="store_true", default=FALSE, 
+             help="Add per-ROI baseline covariate (value at first visit per subject)"),
+  make_option(c("--derive-group5"), action="store_true", default=FALSE, 
+             help="Derive intervention covariates from group_5: interv, smallgroup, weeks4, weeks"),
+  make_option(c("--gam-k"), type="integer", default=NA, 
+             help="GAM basis dimension k for s(time) [default: auto, min(5, unique timepoints)]"),
+  make_option(c("--no-gam-re"), action="store_true", default=FALSE, 
+             help="Disable random intercept s(fsid_base, bs='re') in GAM models"),
+  
+  # Input/output options
+  make_option(c("-o", "--outdir"), type="character", default="fslmer_out", 
+             help="Output directory [default: %default]"),
+  make_option(c("--save-merged"), action="store_true", default=FALSE, 
+             help="Save merged input data as CSV for inspection"),
+  make_option(c("--time-col"), type="character", default=NULL, 
+             help="Time variable column name in qdec [default: auto-detect 'tp']"),
+  make_option(c("--id-col"), type="character", default=NULL, 
+             help="ID column in aseg table [default: auto-detect 'Measure:volume']"),
+  
+  # Utility options
+  make_option(c("--print-cols"), action="store_true", default=FALSE, 
+             help="Print column names and preview data then exit"),
+  make_option(c("--quiet"), action="store_true", default=FALSE, 
+             help="Reduce output verbosity"),
+  make_option(c("--debug"), action="store_true", default=FALSE, 
+             help="Enable detailed optimizer logs (fslmer only)"),
+  make_option(c("-h", "--help"), action="store_true", default=FALSE,
+             help="Show this help message and exit")
 )
 
-opt <- parse_args(OptionParser(option_list=option_list))
+# Custom argument parser to handle help
+args <- commandArgs(trailingOnly = TRUE)
+if (length(args) > 0 && (args[1] %in% c("-h", "--help") || any(grepl("^--help", args)))) {
+  cat(get_help_text())
+  cat("\nARGUMENT DETAILS:\n")
+  parser <- OptionParser(option_list=option_list, add_help_option=FALSE)
+  print_help(parser)
+  quit(status=0)
+}
+
+opt <- parse_args(OptionParser(option_list=option_list, add_help_option=FALSE))
 msg <- function(...) { if (!isTRUE(opt$quiet)) cat(sprintf(...), sep="") }
 
 # Config JSON merge (CLI overrides)
@@ -107,11 +213,105 @@ if (!is.null(opt$`random-effects`) && nzchar(as.character(opt$`random-effects`))
   opt$zcols <- opt$`random-effects`
 }
 
+# Comprehensive argument validation
+validate_arguments <- function(opt) {
+  errors <- character(0)
+  
+  # Required input files
+  if (is.null(opt$qdec)) {
+    errors <- c(errors, "Missing required argument: --qdec (path to qdec.table.dat)")
+  } else if (!file.exists(opt$qdec)) {
+    errors <- c(errors, sprintf("qdec file not found: %s", opt$qdec))
+  }
+  
+  if (is.null(opt$aseg)) {
+    errors <- c(errors, "Missing required argument: --aseg (path to aseg/aparc table)")
+  } else if (!file.exists(opt$aseg)) {
+    errors <- c(errors, sprintf("aseg/aparc table not found: %s", opt$aseg))
+  }
+  
+  # ROI selection validation - exactly one method required
+  roi_methods <- sum(c(
+    !is.null(opt$roi),
+    isTRUE(opt$`all-regions`),
+    !is.null(opt$`region-pattern`)
+  ))
+  
+  if (roi_methods == 0) {
+    errors <- c(errors, "ROI selection required: specify --roi, --all-regions, or --region-pattern")
+  } else if (roi_methods > 1) {
+    errors <- c(errors, "Multiple ROI selection methods specified. Choose only one: --roi, --all-regions, or --region-pattern")
+  }
+  
+  # Engine validation
+  valid_engines <- c("fslmer", "glm", "gam")
+  if (!opt$engine %in% valid_engines) {
+    errors <- c(errors, sprintf("Invalid engine '%s'. Valid options: %s", opt$engine, paste(valid_engines, collapse=", ")))
+  }
+  
+  # Formula validation
+  if (is.null(opt$formula) || nchar(trimws(opt$formula)) == 0) {
+    errors <- c(errors, "Empty or missing formula. Use --formula '~ tp' for basic time effect")
+  } else {
+    tryCatch(as.formula(opt$formula), error = function(e) {
+      errors <<- c(errors, sprintf("Invalid formula syntax: %s", e$message))
+    })
+  }
+  
+  # GAM-specific validation
+  if (opt$engine == "gam") {
+    if (!is.na(opt$`gam-k`) && opt$`gam-k` < 2) {
+      errors <- c(errors, "GAM basis dimension k (--gam-k) must be >= 2")
+    }
+  }
+  
+  # Output directory creation
+  if (!dir.exists(opt$outdir)) {
+    tryCatch({
+      dir.create(opt$outdir, recursive = TRUE)
+      msg("Created output directory: %s\n", opt$outdir)
+    }, error = function(e) {
+      errors <<- c(errors, sprintf("Cannot create output directory '%s': %s", opt$outdir, e$message))
+    })
+  }
+  
+  if (length(errors) > 0) {
+    cat("VALIDATION ERRORS:\n", file = stderr())
+    for (i in seq_along(errors)) {
+      cat(sprintf("  %d. %s\n", i, errors[i]), file = stderr())
+    }
+    cat("\nUse --help for usage examples and argument details.\n", file = stderr())
+    quit(status = 1)
+  }
+  
+  # Warnings for deprecated options
+  if (!is.null(opt$zcols) && is.null(opt$`random-effects`)) {
+    msg("WARNING: --zcols is deprecated. Use --random-effects instead.\n")
+  }
+}
+
+# Run validation (skip for --print-cols which has its own validation)
+if (!isTRUE(opt$`print-cols`)) {
+  validate_arguments(opt)
+}
+
 # For --print-cols we only need to read files
 if (isTRUE(opt$`print-cols`)) {
-  if (is.null(opt$qdec) || is.null(opt$aseg)) stop("qdec and aseg paths are required for --print-cols")
-  if (!file.exists(opt$qdec)) stop(sprintf("qdec file not found: %s", opt$qdec))
-  if (!file.exists(opt$aseg)) stop(sprintf("aseg/aparc table not found: %s", opt$aseg))
+  if (is.null(opt$qdec) || is.null(opt$aseg)) {
+    cat("ERROR: --print-cols requires both --qdec and --aseg arguments\n", file = stderr())
+    cat("Use --help for usage examples.\n", file = stderr())
+    quit(status = 1)
+  }
+  if (!file.exists(opt$qdec)) {
+    cat(sprintf("ERROR: qdec file not found: %s\n", opt$qdec), file = stderr())
+    quit(status = 1)
+  }
+  if (!file.exists(opt$aseg)) {
+    cat(sprintf("ERROR: aseg/aparc table not found: %s\n", opt$aseg), file = stderr())
+    quit(status = 1)
+  }
+  
+  msg("Reading files to display column information...\n")
   qdec <- tryCatch(read.delim(opt$qdec, header=TRUE, sep="\t", stringsAsFactors=FALSE), error=function(e) NULL)
   if (is.null(qdec)) qdec <- read.table(opt$qdec, header=TRUE, stringsAsFactors=FALSE)
   aseg <- read.table(opt$aseg, header=TRUE, stringsAsFactors=FALSE)
@@ -124,11 +324,8 @@ if (isTRUE(opt$`print-cols`)) {
   quit(status=0)
 }
 
-if (is.null(opt$qdec) || is.null(opt$aseg)) stop("qdec and aseg paths are required (via flags or config)")
-if (!file.exists(opt$qdec)) stop(sprintf("qdec file not found: %s", opt$qdec))
-if (!file.exists(opt$aseg)) stop(sprintf("aseg/aparc table not found: %s", opt$aseg))
-
-# Read inputs
+# Read inputs (validation already ensures files exist)
+msg("Reading input files...\n")
 qdec <- tryCatch(read.delim(opt$qdec, header=TRUE, sep="\t", stringsAsFactors=FALSE), error=function(e) NULL)
 if (is.null(qdec)) qdec <- read.table(opt$qdec, header=TRUE, stringsAsFactors=FALSE)
 
