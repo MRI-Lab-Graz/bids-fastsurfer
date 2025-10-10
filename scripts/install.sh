@@ -10,10 +10,13 @@ set -euo pipefail
 #
 # Usage:
 #   bash scripts/install.sh [--use-specs] [--no-compilers] [--pkgs-dir DIR] [--tmpdir DIR]
-#                           [--auto-apt] [--env fastsurfer-r] [--r 4.5]
+#                           [--auto-apt] [--env fastsurfer-r] [--r 4.5] [--prefix DIR]
+#                           [--skip-extras] [--bettermc-version VERSION]
 #
 # Notes:
 # - --auto-apt will attempt to apt-get install missing CLI tools on Debian/Ubuntu with sudo
+# - --prefix allows custom micromamba installation location (default: ~/.local/micromamba)
+# - --skip-extras skips R package installation (bettermc, fslmer)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -26,6 +29,9 @@ TMP_DIR=""
 AUTO_APT=0
 ENV_NAME="fastsurfer-r"
 R_VERSION=""
+PREFIX=""
+SKIP_EXTRAS=0
+BETTERMC_VERSION="1.2.1"
 # Precheck controls
 MIN_TMP_GB=3
 MIN_CACHE_GB=5
@@ -40,6 +46,9 @@ while [[ $# -gt 0 ]]; do
     --auto-apt) AUTO_APT=1; shift ;;
     --env) ENV_NAME="${2:-}"; shift 2 ;;
     --r) R_VERSION="${2:-}"; shift 2 ;;
+    --prefix) PREFIX="${2:-}"; shift 2 ;;
+    --skip-extras) SKIP_EXTRAS=1; shift ;;
+    --bettermc-version) BETTERMC_VERSION="${2:-}"; shift 2 ;;
     --min-tmp-gb) MIN_TMP_GB="${2:-3}"; shift 2 ;;
     --min-cache-gb) MIN_CACHE_GB="${2:-5}"; shift 2 ;;
   --require-fs) REQUIRE_FS=1; shift ;;
@@ -61,28 +70,47 @@ while [[ $# -gt 0 ]]; do
       echo "  # Custom env name and R version"
       echo "  bash scripts/install.sh --env my-r-env --r 4.5"
       echo
-      echo "  # Proceed without FreeSurfer (advanced; features depending on FS won’t work)"
+      echo "  # Custom micromamba installation location"
+      echo "  bash scripts/install.sh --prefix /path/to/custom/micromamba"
+      echo
+      echo "  # Skip R package installation (bettermc, fslmer)"
+      echo "  bash scripts/install.sh --skip-extras"
+      echo
+      echo "  # Use specific bettermc version"
+      echo "  bash scripts/install.sh --bettermc-version 1.2.1"
+      echo
+      echo "  # Proceed without FreeSurfer (advanced; features depending on FS won't work)"
       echo "  bash scripts/install.sh --allow-no-fs"
       echo
       echo "  # Auto-install missing CLI prerequisites (Debian/Ubuntu)"
       echo "  bash scripts/install.sh --auto-apt"
       echo
       echo "Options"
-      echo "  --env NAME         Micromamba environment name (default: fastsurfer-r)"
-      echo "  --r VERSION        R version override (default from environment.yml)"
-      echo "  --no-compilers     Skip C/C++/Fortran compilers to save space"
-      echo "  --pkgs-dir DIR     Package cache directory (use a large, writable path)"
-      echo "  --tmpdir DIR       Temporary directory for downloads (use a large, writable path)"
-      echo "  --min-tmp-gb N     Minimum free space in TMPDIR in GB (default: 3)"
-      echo "  --min-cache-gb N   Minimum free space in package cache in GB (default: 5)"
-      echo "  --require-fs       Fail if FreeSurfer is not detected locally (default)"
-      echo "  --allow-no-fs      Proceed without FreeSurfer (advanced; not recommended)"
-      echo "  --auto-apt         apt-get missing tools (Linux Debian/Ubuntu; requires sudo)"
-      echo "  --use-specs        Use explicit conda specs instead of environment.yml"
+      echo "  --env NAME              Micromamba environment name (default: fastsurfer-r)"
+      echo "  --r VERSION             R version override (default from environment.yml)"
+      echo "  --prefix DIR            Custom micromamba installation path (default: ~/.local/micromamba)"
+      echo "  --no-compilers          Skip C/C++/Fortran compilers to save space"
+      echo "  --pkgs-dir DIR          Package cache directory (use a large, writable path)"
+      echo "  --tmpdir DIR            Temporary directory for downloads (use a large, writable path)"
+      echo "  --skip-extras           Skip R package installation (bettermc, fslmer)"
+      echo "  --bettermc-version VER  bettermc version to install (default: 1.2.1)"
+      echo "  --min-tmp-gb N          Minimum free space in TMPDIR in GB (default: 3)"
+      echo "  --min-cache-gb N        Minimum free space in package cache in GB (default: 5)"
+      echo "  --require-fs            Fail if FreeSurfer is not detected locally (default)"
+      echo "  --allow-no-fs           Proceed without FreeSurfer (advanced; not recommended)"
+      echo "  --auto-apt              apt-get missing tools (Linux Debian/Ubuntu; requires sudo)"
+      echo "  --use-specs             Use explicit conda specs instead of environment.yml"
       echo
       echo "Examples"
       echo "  # Require FreeSurfer (default) and set stricter space thresholds"
       echo "  bash scripts/install.sh --min-tmp-gb 5 --min-cache-gb 8"
+      echo
+      echo "  # Install to custom location with specific bettermc version"
+      echo "  bash scripts/install.sh --prefix /data/mamba --bettermc-version 1.2.1"
+      echo
+      echo "  # Quick environment setup without R extras"
+      echo "  bash scripts/install.sh --skip-extras"
+
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
@@ -147,7 +175,7 @@ check_space_gb() {
 
 # Determine effective TMP and cache paths for checking
 EFFECTIVE_TMP="${TMP_DIR:-${TMPDIR:-/tmp}}"
-EFFECTIVE_CACHE="${PKGS_DIR:-$HOME/.local/micromamba}"
+EFFECTIVE_CACHE="${PKGS_DIR:-${PREFIX:-$HOME/.local/micromamba}}"
 
 if ! check_space_gb "$EFFECTIVE_TMP" "$MIN_TMP_GB" "TMPDIR"; then
   echo "💡 Hint: re-run with --tmpdir pointing to a larger volume (and ensure write permissions)." >&2
@@ -198,11 +226,29 @@ fi
 [[ -n "$TMP_DIR" ]] && CMD+=(--tmpdir "$TMP_DIR")
 [[ -n "$ENV_NAME" ]] && CMD+=(--env "$ENV_NAME")
 [[ -n "$R_VERSION" ]] && CMD+=(--r "$R_VERSION")
+[[ -n "$PREFIX" ]] && CMD+=(--prefix "$PREFIX")
+[[ "$SKIP_EXTRAS" -eq 1 ]] && CMD+=(--skip-extras)
+[[ -n "$BETTERMC_VERSION" ]] && CMD+=(--bettermc-version "$BETTERMC_VERSION")
 
 export MAMBA_NO_PROGRESS_BARS=1
 export MAMBA_NO_BANNER=1
 echo "🚀 Setting up environment (this may take a while)..."
 "${CMD[@]}"
+
+# Skip fsqc installation if --skip-extras is set
+if [[ "$SKIP_EXTRAS" -eq 1 ]]; then
+  echo
+  echo "⏭️  Skipping fsqc installation (--skip-extras set)"
+  echo
+  echo "🎉 Done"
+  echo "👉 Activate the environment:"
+  echo "   source scripts/mamba_activate.sh"
+  echo "👉 Note: R extras (bettermc, fslmer) and fsqc were skipped."
+  echo "   To install them later, run without --skip-extras."
+  echo "👉 Deactivate later:"
+  echo "   source scripts/mamba_deactivate.sh"
+  exit 0
+fi
 
 echo
 echo
