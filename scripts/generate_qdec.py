@@ -1,24 +1,38 @@
 #!/usr/bin/env python3
 """
-Generate a FreeSurfer longitudinal Qdec file from a BIDS participants.tsv and a
+Generate a FreeSurfer Qdec file from a BIDS participants.tsv and a
 FastSurfer/FreeSurfer subjects directory.
 
-This script scans the subjects_dir for subject base templates and longitudinal
-timepoints, then merges covariates from participants.tsv to produce a Qdec file
-with the required columns:
+Supports both cross-sectional and longitudinal studies:
+  - Cross-sectional: Single timepoint per subject (fsid = fsid-base)
+  - Longitudinal: Multiple timepoints per subject (fsid contains session, fsid-base is subject)
 
-  - fsid:       the longitudinal timepoint subject id (e.g., sub-001_ses-1)
+This script scans the subjects_dir for subjects and timepoints, then merges 
+covariates from participants.tsv to produce a Qdec file with the required columns:
+
+  - fsid:       the subject/timepoint id (e.g., sub-001 or sub-001_ses-1)
   - fsid-base:  the within-subject template id (e.g., sub-001)
+  - tp:         numeric timepoint (derived from ses-<number> for longitudinal)
 
-Additional columns are carried over from participants.tsv (e.g., age, sex, group)
-and a numeric 'tp' column is derived from the session label (ses-<number> when
-available). Rows are sorted by fsid-base and tp.
+Additional columns are carried over from participants.tsv (e.g., age, sex, group).
+Rows are sorted by fsid-base and tp.
+
+Note: For advanced analysis (aseg/aparc tables, surface preprocessing, QC),
+      use analyse_qdec.py after generating the Qdec file.
 
 References:
   - FreeSurfer Longitudinal Statistics:
     https://surfer.nmr.mgh.harvard.edu/fswiki/LongitudinalStatistics
 
-Example:
+Examples:
+  # Longitudinal study
+  python scripts/generate_qdec.py \
+    --participants /path/to/participants.tsv \
+    --subjects-dir /path/to/subjects_dir \
+    --output qdec.table.dat \
+    --verify-long --link-long
+
+  # Cross-sectional study
   python scripts/generate_qdec.py \
     --participants /path/to/participants.tsv \
     --subjects-dir /path/to/subjects_dir \
@@ -28,12 +42,10 @@ Example:
 from __future__ import annotations
 
 import argparse
-import os
 import csv
+import os
 import re
 import sys
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 
@@ -43,7 +55,9 @@ SES_NUM_PATTERN = re.compile(r"^ses-(?P<num>\d+)$")
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Generate FreeSurfer longitudinal Qdec file")
+    p = argparse.ArgumentParser(
+        description="Generate FreeSurfer Qdec file (cross-sectional or longitudinal)"
+    )
     p.add_argument("--participants", required=True, type=Path, help="Path to BIDS participants.tsv")
     p.add_argument(
         "--subjects-dir",
@@ -115,11 +129,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--link-force",
         action="store_true",
         help="If an existing symlink points elsewhere, replace it (does not delete real directories)",
-    )
-    p.add_argument(
-        "--aseg",
-        action="store_true",
-        help="After writing QDEC, run asegstats2table and store aseg.long.table alongside it",
     )
     p.add_argument(
         "--skip-sub", default=None, help="Comma-separated fsid_base IDs to skip (exclude) from QDEC"
@@ -525,46 +534,6 @@ def verify_and_link_long(
         print(sample + (" ..." if len(missing_stats) > limit else ""))
 
 
-def run_asegstats2table(qdec_path: Path, subjects_dir: Path) -> int:
-    """Run asegstats2table with SUBJECTS_DIR pointing to subjects_dir."""
-
-    aseg_bin = shutil.which("asegstats2table")
-    if not aseg_bin:
-        print(
-            "asegstats2table not found in PATH. Source FreeSurfer before using --aseg.",
-            file=sys.stderr,
-        )
-        return 4
-
-    aseg_out = qdec_path.parent / "aseg.long.table"
-    aseg_out.parent.mkdir(parents=True, exist_ok=True)
-
-    env = os.environ.copy()
-    env["SUBJECTS_DIR"] = str(subjects_dir.resolve())
-
-    cmd = [
-        aseg_bin,
-        "--qdec-long",
-        str(qdec_path),
-        "-t",
-        str(aseg_out),
-        "--skip",
-    ]
-    print(f"Running: {' '.join(cmd)} (with SUBJECTS_DIR={env['SUBJECTS_DIR']})")
-
-    try:
-        subprocess.run(cmd, check=True, env=env)
-    except subprocess.CalledProcessError as exc:
-        print(
-            f"asegstats2table failed with exit code {exc.returncode}. Command: {' '.join(cmd)}",
-            file=sys.stderr,
-        )
-        return exc.returncode or 5
-
-    print(f"Wrote asegstats2table output: {aseg_out}")
-    return 0
-
-
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     # Existence checks
@@ -647,10 +616,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             force=args.link_force,
         )
 
-    if args.aseg:
-        rc = run_asegstats2table(out_path, args.subjects_dir)
-        if rc != 0:
-            return rc
     return 0
 
 
