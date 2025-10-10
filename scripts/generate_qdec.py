@@ -37,21 +37,39 @@ Examples:
     --participants /path/to/participants.tsv \
     --subjects-dir /path/to/subjects_dir \
     --output qdec.table.dat
+
+  # Verbose output
+  python scripts/generate_qdec.py \
+    --participants /path/to/participants.tsv \
+    --subjects-dir /path/to/subjects_dir \
+    --verbose
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import logging
 import os
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 
-
+# Constants
 SUBJECT_DIR_PATTERN = re.compile(r"^(?P<base>sub-[^/]+?)(?:_(?P<ses>ses-[^/]+))?$")
 SES_NUM_PATTERN = re.compile(r"^ses-(?P<num>\d+)$")
+MISSING_TOKENS = {"", "na", "n/a", "nan", "null"}
+DEFAULT_LIST_LIMIT = 20
+DEFAULT_OUTPUT_FILENAME = "qdec.table.dat"
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s: %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -68,10 +86,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument(
         "--output",
         type=Path,
-        default=Path("qdec.table.dat"),
+        default=Path(DEFAULT_OUTPUT_FILENAME),
         help=(
-            "Output Qdec TSV file (default: qdec.table.dat). "
-            "If a directory path is provided, the file 'qdec.table.dat' will be created inside it."
+            f"Output Qdec TSV file (default: {DEFAULT_OUTPUT_FILENAME}). "
+            "If a directory path is provided, the file will be created inside it."
         ),
     )
     p.add_argument(
@@ -106,8 +124,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument(
         "--list-limit",
         type=int,
-        default=20,
-        help="Max number of IDs to show when listing missing subjects (default: 20)",
+        default=DEFAULT_LIST_LIMIT,
+        help=f"Max number of IDs to show when listing missing subjects (default: {DEFAULT_LIST_LIMIT})",
     )
     # FastSurfer compatibility with FreeSurfer .long directories
     p.add_argument(
@@ -138,6 +156,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="File with fsid_base IDs (one per line) to skip from QDEC",
+    )
+    p.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose logging",
     )
     return p.parse_args(argv)
 
@@ -260,7 +283,6 @@ def build_qdec_rows(
 
     rows: List[List[str]] = []
     skipped_missing_sex: List[str] = []
-    missing_tokens = {"", "na", "n/a", "nan", "null"}
     sex_col_idx: Optional[int] = None
     if "sex" in cols_to_include:
         sex_col_idx = cols_to_include.index("sex")
@@ -282,7 +304,7 @@ def build_qdec_rows(
         if sex_col_idx is not None:
             sex_value = values[sex_col_idx]
             norm_sex = str(sex_value).strip().lower() if sex_value is not None else None
-            if norm_sex is None or norm_sex in missing_tokens:
+            if norm_sex is None or norm_sex in MISSING_TOKENS:
                 skipped_missing_sex.append(fsid)
                 continue
 
@@ -304,7 +326,7 @@ def build_qdec_rows(
         limit = 10
         sample = ", ".join(skipped_missing_sex[:limit])
         more = " ..." if len(skipped_missing_sex) > limit else ""
-        print(
+        logger.warning(
             f"Skipped {len(skipped_missing_sex)} timepoints due to missing/invalid sex values: {sample}{more}"
         )
     return header, rows
@@ -372,53 +394,53 @@ def summarize_consistency(
         if ses:
             sd_pairs.add((base, ses))
 
-    print("=== Qdec/Subjects summary ===")
-    print(f"subjects_dir: {subjects_dir}")
-    print(f"participants.tsv subjects: {len(parts_subjects)}")
-    print(f"subjects_dir subjects (with any timepoints): {len(sd_subjects)}")
-    print(f"subjects_dir timepoints: {len(timepoints)}")
+    logger.info("=== Qdec/Subjects summary ===")
+    logger.info(f"subjects_dir: {subjects_dir}")
+    logger.info(f"participants.tsv subjects: {len(parts_subjects)}")
+    logger.info(f"subjects_dir subjects (with any timepoints): {len(sd_subjects)}")
+    logger.info(f"subjects_dir timepoints: {len(timepoints)}")
 
     only_in_participants = sorted(parts_subjects - sd_subjects)
     only_in_subjects_dir = sorted(sd_subjects - parts_subjects)
     if only_in_participants:
-        print(
+        logger.info(
             f"Subjects in participants.tsv but missing in subjects_dir: {len(only_in_participants)}"
         )
-        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
-        print(
+        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", DEFAULT_LIST_LIMIT)
+        logger.info(
             ", ".join(only_in_participants[:limit])
             + (" ..." if len(only_in_participants) > limit else "")
         )
     if only_in_subjects_dir:
-        print(
+        logger.info(
             f"Subjects in subjects_dir but missing in participants.tsv: {len(only_in_subjects_dir)}"
         )
-        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
-        print(
+        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", DEFAULT_LIST_LIMIT)
+        logger.info(
             ", ".join(only_in_subjects_dir[:limit])
             + (" ..." if len(only_in_subjects_dir) > limit else "")
         )
 
     if bids_root:
         bids_subjects, bids_pairs = scan_bids_subjects(bids_root)
-        print(f"BIDS subjects: {len(bids_subjects)}")
+        logger.info(f"BIDS subjects: {len(bids_subjects)}")
         missing_in_sd = sorted(bids_subjects - sd_subjects)
         missing_in_parts = sorted(bids_subjects - parts_subjects)
-        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
+        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", DEFAULT_LIST_LIMIT)
         # Avoid repeating the exact same list twice. If participants-missing and BIDS-missing-in-sd are identical,
         # suppress the second detailed list and only print counts.
         if missing_in_sd:
-            print(f"BIDS subjects missing in subjects_dir: {len(missing_in_sd)}")
+            logger.info(f"BIDS subjects missing in subjects_dir: {len(missing_in_sd)}")
             if missing_in_sd != only_in_participants:
-                print(
+                logger.info(
                     ", ".join(missing_in_sd[:limit])
                     + (" ..." if len(missing_in_sd) > limit else "")
                 )
         if missing_in_parts:
-            print(f"BIDS subjects missing in participants.tsv: {len(missing_in_parts)}")
+            logger.info(f"BIDS subjects missing in participants.tsv: {len(missing_in_parts)}")
             # This is generally different; still avoid printing if equal to only_in_subjects_dir
             if missing_in_parts != only_in_subjects_dir:
-                print(
+                logger.info(
                     ", ".join(missing_in_parts[:limit])
                     + (" ..." if len(missing_in_parts) > limit else "")
                 )
@@ -493,7 +515,7 @@ def verify_and_link_long(
     for fsid, base, ses in timepoints:
         if ".long." in fsid:
             skipped += 1
-            print(f"skipping: {fsid} (already a .long entry)")
+            logger.debug(f"skipping: {fsid} (already a .long entry)")
             continue
         tp_dir = subjects_dir / fsid
         long_dir = subjects_dir / f"{fsid}.long.{base}"
@@ -517,46 +539,25 @@ def verify_and_link_long(
                 updated += 1
             else:
                 skipped += 1
-            print(msg)
+            logger.info(msg)
         else:
-            print(
+            logger.info(
                 f"would link: {long_dir} -> {tp_dir} (use --link-long to create){' [MISSING]' if not stats_path.exists() else ''}"
             )
             skipped += 1
 
-    print("=== Long symlink verification ===")
-    print(f"Existing long dirs: {present}")
-    print(f"Created: {created}, Updated: {updated}, Skipped: {skipped}")
+    logger.info("=== Long symlink verification ===")
+    logger.info(f"Existing long dirs: {present}")
+    logger.info(f"Created: {created}, Updated: {updated}, Skipped: {skipped}")
     if missing_stats:
-        print(f"Timepoints missing stats/aseg.stats in {subjects_dir}: {len(missing_stats)}")
-        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
+        logger.warning(f"Timepoints missing stats/aseg.stats in {subjects_dir}: {len(missing_stats)}")
+        limit = getattr(sys.modules[__name__], "_LIST_LIMIT", DEFAULT_LIST_LIMIT)
         sample = ", ".join(sorted(missing_stats)[:limit])
-        print(sample + (" ..." if len(missing_stats) > limit else ""))
+        logger.warning(sample + (" ..." if len(missing_stats) > limit else ""))
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    args = parse_args(argv)
-    # Existence checks
-    if not args.participants.exists():
-        print(f"ERROR: participants.tsv not found: {args.participants}", file=sys.stderr)
-        return 2
-    if not args.subjects_dir.exists() or not args.subjects_dir.is_dir():
-        print(
-            f"ERROR: subjects_dir not found or not a directory: {args.subjects_dir}",
-            file=sys.stderr,
-        )
-        return 2
-
-    fieldnames, participants_rows, participant_col, session_col = read_participants(
-        args.participants, args.participant_column, args.session_column
-    )
-    if args.inspect:
-        print("participants.tsv columns:")
-        for fn in fieldnames:
-            print(f"- {fn}")
-        return 0
-    timepoints = scan_subjects_dir(args.subjects_dir)
-    # Build skip set from CLI options
+def build_skip_set(args) -> Set[str]:
+    """Build the set of subjects to skip from CLI arguments."""
     skip_set: Set[str] = set()
     if args.skip_sub:
         for tok in str(args.skip_sub).split(","):
@@ -571,7 +572,103 @@ def main(argv: Optional[List[str]] = None) -> int:
                     if tok and not tok.startswith("#"):
                         skip_set.add(tok)
         except Exception as e:
-            print(f"[WARN] Failed reading --skip-file {args.skip_file}: {e}", file=sys.stderr)
+            logger.warning(f"Failed reading --skip-file {args.skip_file}: {e}")
+    return skip_set
+
+
+def resolve_output_path(args) -> Path:
+    """Resolve the output path, handling directory inputs."""
+    out_path = args.output
+    try:
+        if out_path.exists() and out_path.is_dir():
+            out_path = out_path / DEFAULT_OUTPUT_FILENAME
+            logger.info(f"--output points to a directory; writing file to: {out_path}")
+        elif str(out_path).endswith(os.sep):
+            # Trailing slash suggests intent as directory even if it doesn't exist yet
+            out_path = out_path / DEFAULT_OUTPUT_FILENAME
+            logger.info(f"--output looks like a directory; writing file to: {out_path}")
+    except Exception:
+        # If os-level checks fail, proceed and let write_qdec handle parent creation and raise meaningful errors
+        pass
+    return out_path
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = parse_args(argv)
+
+    # Configure logging level based on verbose flag
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    else:
+        logging.getLogger().setLevel(logging.INFO)
+
+    # Existence checks
+    if not args.participants.exists():
+        logger.error(f"participants.tsv not found: {args.participants}")
+        return 2
+    if not args.subjects_dir.exists() or not args.subjects_dir.is_dir():
+        logger.error(f"subjects_dir not found or not a directory: {args.subjects_dir}")
+        return 2
+
+    fieldnames, participants_rows, participant_col, session_col = read_participants(
+        args.participants, args.participant_column, args.session_column
+    )
+
+    if args.inspect:
+        logger.info("participants.tsv columns:")
+        for fn in fieldnames:
+            logger.info(f"- {fn}")
+
+        # Analyze values in each column
+        logger.info("\nparticipants.tsv value analysis:")
+        for col in fieldnames:
+            all_values = [row.get(col, "") for row in participants_rows]
+            non_empty_values = [v for v in all_values if v.strip()]
+            missing_count = len(all_values) - len(non_empty_values)
+
+            if not non_empty_values:
+                logger.info(f"- {col}: (empty column)")
+                continue
+
+            # Try to determine if numeric
+            numeric_values = []
+            for v in non_empty_values:
+                try:
+                    numeric_values.append(float(v))
+                except (ValueError, TypeError):
+                    pass
+
+            unique_vals = set(non_empty_values)
+
+            if len(numeric_values) > len(non_empty_values) * 0.8:  # Mostly numeric
+                min_val = min(numeric_values)
+                max_val = max(numeric_values)
+                unique_numeric = sorted(set(numeric_values))
+                if len(unique_numeric) <= 10:
+                    logger.info(f"- {col}: numeric, values {unique_numeric}, range [{min_val:.2f}, {max_val:.2f}]")
+                else:
+                    logger.info(f"- {col}: numeric, range [{min_val:.2f}, {max_val:.2f}], {len(unique_vals)} unique values")
+            else:
+                # Categorical
+                if len(unique_vals) <= 10:
+                    sorted_unique = sorted(unique_vals)
+                    logger.info(f"- {col}: categorical, {len(unique_vals)} unique values: {', '.join(sorted_unique)}")
+                else:
+                    logger.info(f"- {col}: categorical, {len(unique_vals)} unique values")
+                    # Show most common values
+                    counts = Counter(non_empty_values)
+                    most_common = counts.most_common(5)
+                    logger.info(f"    top values: {', '.join(f'{val}({count})' for val, count in most_common)}")
+
+            if missing_count > 0:
+                logger.info(f"    missing: {missing_count} rows")
+
+        logger.info(f"\nTotal rows: {len(participants_rows)}")
+        return 0
+
+    timepoints = scan_subjects_dir(args.subjects_dir)
+    skip_set = build_skip_set(args)
+
     header, rows = build_qdec_rows(
         timepoints,
         participants_rows,
@@ -581,31 +678,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.strict,
         skip_set=skip_set or None,
     )
+
     if skip_set:
-        print(f"[INFO] Skipped subjects (fsid-base) provided: {len(skip_set)}")
-    # set list limit globally for summary printing
+        logger.info(f"Skipped subjects (fsid-base) provided: {len(skip_set)}")
+
+    # Set list limit globally for summary printing
     setattr(sys.modules[__name__], "_LIST_LIMIT", max(0, int(args.list_limit)))
 
-    # Resolve --output: if a directory was provided, place default filename inside it
-    out_path = args.output
-    try:
-        if out_path.exists() and out_path.is_dir():
-            out_path = out_path / "qdec.table.dat"
-            print(f"[INFO] --output points to a directory; writing file to: {out_path}")
-        elif str(out_path).endswith(os.sep):
-            # Trailing slash suggests intent as directory even if it doesn't exist yet
-            out_path = out_path / "qdec.table.dat"
-            print(f"[INFO] --output looks like a directory; writing file to: {out_path}")
-    except Exception:
-        # If os-level checks fail, proceed and let write_qdec handle parent creation and raise meaningful errors
-        pass
-
+    out_path = resolve_output_path(args)
     write_qdec(out_path, header, rows)
-    print(f"Wrote Qdec file: {out_path}")
+    logger.info(f"Wrote Qdec file: {out_path}")
+
     # Optional consistency summary
     summarize_consistency(
         args.bids, args.subjects_dir, participants_rows, participant_col, session_col, timepoints
     )
+
     # Optional FastSurfer .long symlink verification/creation for FreeSurfer tools compatibility
     if args.verify_long or args.link_long:
         verify_and_link_long(
