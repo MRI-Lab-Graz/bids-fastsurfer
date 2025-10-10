@@ -115,53 +115,59 @@ def _coerce_int_list(val) -> Optional[List[int]]:
 
 def check_dependencies(args: argparse.Namespace) -> List[str]:
     """Check for required dependencies and return list of missing tools/packages.
-    
+
     Returns:
         List of missing dependencies with installation instructions.
     """
     missing = []
-    
+
     # Check FreeSurfer tools
     if args.aseg and not args.link_dry_run:
         if shutil.which("asegstats2table") is None:
             missing.append("asegstats2table (FreeSurfer) - ensure FreeSurfer is sourced")
-    
+
     if args.aparc and not args.link_dry_run:
         if shutil.which("aparcstats2table") is None:
             missing.append("aparcstats2table (FreeSurfer) - ensure FreeSurfer is sourced")
-    
+
     if args.surf:
         if shutil.which("mris_preproc") is None:
             missing.append("mris_preproc (FreeSurfer) - ensure FreeSurfer is sourced")
         if shutil.which("mri_surf2surf") is None:
             missing.append("mri_surf2surf (FreeSurfer) - ensure FreeSurfer is sourced")
-    
+
     # Check Python packages
     if args.qc:
         # Check for fsqc - try both command and Python module import
         fsqc_available = False
-        
+
         # First try the run_fsqc command
         if shutil.which("run_fsqc") is not None:
             fsqc_available = True
         else:
             # If command not found, try importing the Python module
             try:
-                import fsqc
+                import fsqc  # noqa: F401
+
                 fsqc_available = True
             except ImportError:
                 pass
-        
+
         if not fsqc_available:
             missing.append("fsqc (Python package) - install with: bash scripts/install.sh")
-    
+
     return missing
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     # Phase 1: parse only --config to optionally load defaults from JSON
     p0 = argparse.ArgumentParser(add_help=False)
-    p0.add_argument("--config", type=Path, default=None, help="Optional JSON config file with settings; CLI overrides it")
+    p0.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Optional JSON config file with settings; CLI overrides it",
+    )
     ns0, _ = p0.parse_known_args(argv)
 
     cfg: Dict[str, object] = {}
@@ -172,20 +178,24 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         with cfg_path.open("r") as fh:
             cfg = json.load(fh)
 
-    p = argparse.ArgumentParser(description="Prepare longitudinal QDEC and optional aseg/aparc tables", parents=[p0])
-    
+    p = argparse.ArgumentParser(
+        description="Prepare longitudinal QDEC and optional aseg/aparc tables", parents=[p0]
+    )
+
     # Required arguments
-    required = p.add_argument_group('Required arguments')
-    required.add_argument("--participants", required=True, type=Path, help="Path to BIDS participants.tsv")
+    required = p.add_argument_group("Required arguments")
+    required.add_argument(
+        "--participants", required=True, type=Path, help="Path to BIDS participants.tsv"
+    )
     required.add_argument(
         "--subjects-dir",
         required=True,
         type=Path,
         help="Path to FastSurfer/FreeSurfer subjects directory",
     )
-    
+
     # Input/Output configuration
-    io_group = p.add_argument_group('Input/Output configuration')
+    io_group = p.add_argument_group("Input/Output configuration")
     io_group.add_argument(
         "--output",
         type=Path,
@@ -196,72 +206,222 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             " compatibility, a file path ending in .dat/.tsv/.table is also accepted."
         ),
     )
-    io_group.add_argument("--participant-column", default="participant_id", help="Column name for participant id (default: participant_id)")
-    io_group.add_argument("--session-column", default="session_id", help="Column name for session id if present (default: session_id)")
+    io_group.add_argument(
+        "--participant-column",
+        default="participant_id",
+        help="Column name for participant id (default: participant_id)",
+    )
+    io_group.add_argument(
+        "--session-column",
+        default="session_id",
+        help="Column name for session id if present (default: session_id)",
+    )
     io_group.add_argument(
         "--include-columns",
         nargs="*",
         default=None,
         help="Optional explicit list of covariate columns to include from participants.tsv. "
-             "If omitted, include all columns except participant and session columns.",
+        "If omitted, include all columns except participant and session columns.",
     )
-    io_group.add_argument("--strict", action="store_true", help="Fail if a subjects_dir timepoint has no matching participants row")
-    io_group.add_argument("--inspect", action="store_true", help="Print participants.tsv columns and exit")
-    io_group.add_argument("--bids", type=Path, default=None, help="Optional BIDS root to cross-check subjects/sessions consistency")
-    io_group.add_argument("--list-limit", type=int, default=20, help="Max number of IDs to show when listing missing subjects (default: 20)")
-    io_group.add_argument("--force", action="store_true", help="Overwrite/replace existing outputs where applicable (surf, qc, tables)")
-    
+    io_group.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail if a subjects_dir timepoint has no matching participants row",
+    )
+    io_group.add_argument(
+        "--inspect", action="store_true", help="Print participants.tsv columns and exit"
+    )
+    io_group.add_argument(
+        "--bids",
+        type=Path,
+        default=None,
+        help="Optional BIDS root to cross-check subjects/sessions consistency",
+    )
+    io_group.add_argument(
+        "--list-limit",
+        type=int,
+        default=20,
+        help="Max number of IDs to show when listing missing subjects (default: 20)",
+    )
+    io_group.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite/replace existing outputs where applicable (surf, qc, tables)",
+    )
+
     # FreeSurfer .long compatibility
-    long_group = p.add_argument_group('FreeSurfer .long compatibility')
-    long_group.add_argument("--verify-long", action="store_true", help="Verify presence of <fsid>.long.<base>/stats/aseg.stats for each timepoint")
-    long_group.add_argument("--link-long", action="store_true", help="Create <fsid>.long.<base> symlinks pointing to the timepoint directories when missing")
-    long_group.add_argument("--link-dry-run", action="store_true", help="Print the symlink actions without making changes")
-    long_group.add_argument("--link-force", action="store_true", help="If an existing symlink points elsewhere, replace it (does not delete real directories)")
-    
+    long_group = p.add_argument_group("FreeSurfer .long compatibility")
+    long_group.add_argument(
+        "--verify-long",
+        action="store_true",
+        help="Verify presence of <fsid>.long.<base>/stats/aseg.stats for each timepoint",
+    )
+    long_group.add_argument(
+        "--link-long",
+        action="store_true",
+        help="Create <fsid>.long.<base> symlinks pointing to the timepoint directories when missing",
+    )
+    long_group.add_argument(
+        "--link-dry-run",
+        action="store_true",
+        help="Print the symlink actions without making changes",
+    )
+    long_group.add_argument(
+        "--link-force",
+        action="store_true",
+        help="If an existing symlink points elsewhere, replace it (does not delete real directories)",
+    )
+
     # Statistical tables (aseg/aparc)
-    tables_group = p.add_argument_group('Statistical tables (aseg/aparc)')
-    tables_group.add_argument("--aseg", dest="aseg", action="store_true", help="Enable asegstats2table (default: enabled)")
-    tables_group.add_argument("--no-aseg", dest="aseg", action="store_false", help="Disable asegstats2table")
-    tables_group.add_argument("--aparc", dest="aparc", action="store_true", help="Enable aparcstats2table (default: enabled; auto-detects parcellation)")
-    tables_group.add_argument("--no-aparc", dest="aparc", action="store_false", help="Disable aparcstats2table")
+    tables_group = p.add_argument_group("Statistical tables (aseg/aparc)")
+    tables_group.add_argument(
+        "--aseg", dest="aseg", action="store_true", help="Enable asegstats2table (default: enabled)"
+    )
+    tables_group.add_argument(
+        "--no-aseg", dest="aseg", action="store_false", help="Disable asegstats2table"
+    )
+    tables_group.add_argument(
+        "--aparc",
+        dest="aparc",
+        action="store_true",
+        help="Enable aparcstats2table (default: enabled; auto-detects parcellation)",
+    )
+    tables_group.add_argument(
+        "--no-aparc", dest="aparc", action="store_false", help="Disable aparcstats2table"
+    )
     p.set_defaults(aseg=True, aparc=True)
-    tables_group.add_argument("--aparc-parc", default="aparc", help="Aparc parcellation preference (default: aparc; auto-fallback tries aparc.DKTatlas.mapped, aparc, aparc.a2009s)")
-    tables_group.add_argument("--aparc-measures", nargs="*", default=["thickness", "area", "volume"], help="Measures for aparcstats2table (default: thickness area volume)")
-    tables_group.add_argument("--aparc-hemis", nargs="*", default=["lh", "rh"], help="Hemispheres for aparcstats2table (default: lh rh)")
-    
+    tables_group.add_argument(
+        "--aparc-parc",
+        default="aparc",
+        help="Aparc parcellation preference (default: aparc; auto-fallback tries aparc.DKTatlas.mapped, aparc, aparc.a2009s)",
+    )
+    tables_group.add_argument(
+        "--aparc-measures",
+        nargs="*",
+        default=["thickness", "area", "volume"],
+        help="Measures for aparcstats2table (default: thickness area volume)",
+    )
+    tables_group.add_argument(
+        "--aparc-hemis",
+        nargs="*",
+        default=["lh", "rh"],
+        help="Hemispheres for aparcstats2table (default: lh rh)",
+    )
+
     # Subject filtering
-    filter_group = p.add_argument_group('Subject filtering')
-    filter_group.add_argument("--skip-sub", default=None, help="Comma-separated fsid_base IDs to skip (exclude) from QDEC")
-    filter_group.add_argument("--skip-file", type=Path, default=None, help="File with fsid_base IDs (one per line) to skip from QDEC")
+    filter_group = p.add_argument_group("Subject filtering")
+    filter_group.add_argument(
+        "--skip-sub", default=None, help="Comma-separated fsid_base IDs to skip (exclude) from QDEC"
+    )
+    filter_group.add_argument(
+        "--skip-file",
+        type=Path,
+        default=None,
+        help="File with fsid_base IDs (one per line) to skip from QDEC",
+    )
 
     # Surface preprocessing
-    surf_group = p.add_argument_group('Surface preprocessing')
-    surf_group.add_argument("--surf", dest="surf", action="store_true", help="Enable mass-univariate surface prep (mris_preproc + mri_surf2surf); default enabled")
-    surf_group.add_argument("--no-surf", dest="surf", action="store_false", help="Disable mass-univariate surface prep")
-    surf_group.add_argument("--surf-target", default="fsaverage", help="Surface template target for mris_preproc/mri_surf2surf (default: fsaverage)")
-    surf_group.add_argument("--surf-measures", nargs="*", default=["thickness"], help="Surface measures to prepare (default: thickness)")
-    surf_group.add_argument("--surf-hemis", nargs="*", default=["lh", "rh"], help="Hemispheres to prepare (default: lh rh)")
-    surf_group.add_argument("--smooth", default=None, help="Comma- or space-separated smoothing kernels in mm (e.g., '5,10,15'). Overrides --surf-fwhm")
-    surf_group.add_argument("--surf-fwhm", type=int, default=10, help="[Deprecated] Single smoothing FWHM (mm) if --smooth not provided (default: 10)")
-    surf_group.add_argument("--surf-outdir", type=Path, default=None, help="Output directory for surface files (default: alongside QDEC under 'surf/')")
+    surf_group = p.add_argument_group("Surface preprocessing")
+    surf_group.add_argument(
+        "--surf",
+        dest="surf",
+        action="store_true",
+        help="Enable mass-univariate surface prep (mris_preproc + mri_surf2surf); default enabled",
+    )
+    surf_group.add_argument(
+        "--no-surf", dest="surf", action="store_false", help="Disable mass-univariate surface prep"
+    )
+    surf_group.add_argument(
+        "--surf-target",
+        default="fsaverage",
+        help="Surface template target for mris_preproc/mri_surf2surf (default: fsaverage)",
+    )
+    surf_group.add_argument(
+        "--surf-measures",
+        nargs="*",
+        default=["thickness"],
+        help="Surface measures to prepare (default: thickness)",
+    )
+    surf_group.add_argument(
+        "--surf-hemis",
+        nargs="*",
+        default=["lh", "rh"],
+        help="Hemispheres to prepare (default: lh rh)",
+    )
+    surf_group.add_argument(
+        "--smooth",
+        default=None,
+        help="Comma- or space-separated smoothing kernels in mm (e.g., '5,10,15'). Overrides --surf-fwhm",
+    )
+    surf_group.add_argument(
+        "--surf-fwhm",
+        type=int,
+        default=10,
+        help="[Deprecated] Single smoothing FWHM (mm) if --smooth not provided (default: 10)",
+    )
+    surf_group.add_argument(
+        "--surf-outdir",
+        type=Path,
+        default=None,
+        help="Output directory for surface files (default: alongside QDEC under 'surf/')",
+    )
     p.set_defaults(surf=True)
-    
+
     # Quality control (QC)
-    qc_group = p.add_argument_group('Quality control (QC)')
-    qc_group.add_argument("--qc", dest="qc", action="store_true", help="Run fsqc on selected subjects (requires 'run_fsqc' in PATH)")
+    qc_group = p.add_argument_group("Quality control (QC)")
+    qc_group.add_argument(
+        "--qc",
+        dest="qc",
+        action="store_true",
+        help="Run fsqc on selected subjects (requires 'run_fsqc' in PATH)",
+    )
     qc_group.add_argument("--no-qc", dest="qc", action="store_false", help="Disable fsqc step")
     p.set_defaults(qc=False)
-    qc_group.add_argument("--qc-output", type=Path, default=None, help="fsqc output directory (default: alongside QDEC under 'fsqc/')")
-    qc_group.add_argument("--qc-from", choices=["fsid", "base"], default="fsid", help="Select subject IDs for fsqc from QDEC: timepoints (fsid) or bases (fsid-base)")
-    qc_group.add_argument("--qc-fastsurfer", action="store_true", help="Tell fsqc to use --fastsurfer (default: on)")
+    qc_group.add_argument(
+        "--qc-output",
+        type=Path,
+        default=None,
+        help="fsqc output directory (default: alongside QDEC under 'fsqc/')",
+    )
+    qc_group.add_argument(
+        "--qc-from",
+        choices=["fsid", "base"],
+        default="fsid",
+        help="Select subject IDs for fsqc from QDEC: timepoints (fsid) or bases (fsid-base)",
+    )
+    qc_group.add_argument(
+        "--qc-fastsurfer", action="store_true", help="Tell fsqc to use --fastsurfer (default: on)"
+    )
     qc_group.add_argument("--qc-no-fastsurfer", dest="qc_fastsurfer", action="store_false")
     p.set_defaults(qc_fastsurfer=True)
-    qc_group.add_argument("--qc-screenshots", action="store_true", help="Enable fsqc screenshots module (and HTML if --qc-html)")
-    qc_group.add_argument("--qc-surfaces", action="store_true", help="Enable fsqc surfaces module (and HTML if --qc-html)")
-    qc_group.add_argument("--qc-skullstrip", action="store_true", help="Enable fsqc skullstrip module (and HTML if --qc-html)")
-    qc_group.add_argument("--qc-outlier", action="store_true", help="Enable fsqc outlier detection module")
-    qc_group.add_argument("--qc-html", action="store_true", help="For enabled modules, also produce HTML summary pages")
-    qc_group.add_argument("--qc-skip-existing", action="store_true", help="Pass --skip-existing to fsqc to avoid recomputation")
+    qc_group.add_argument(
+        "--qc-screenshots",
+        action="store_true",
+        help="Enable fsqc screenshots module (and HTML if --qc-html)",
+    )
+    qc_group.add_argument(
+        "--qc-surfaces",
+        action="store_true",
+        help="Enable fsqc surfaces module (and HTML if --qc-html)",
+    )
+    qc_group.add_argument(
+        "--qc-skullstrip",
+        action="store_true",
+        help="Enable fsqc skullstrip module (and HTML if --qc-html)",
+    )
+    qc_group.add_argument(
+        "--qc-outlier", action="store_true", help="Enable fsqc outlier detection module"
+    )
+    qc_group.add_argument(
+        "--qc-html",
+        action="store_true",
+        help="For enabled modules, also produce HTML summary pages",
+    )
+    qc_group.add_argument(
+        "--qc-skip-existing",
+        action="store_true",
+        help="Pass --skip-existing to fsqc to avoid recomputation",
+    )
     # Apply config defaults if provided
     if cfg:
         # Map config keys directly to argparse dests; allow hyphen or underscore forms
@@ -312,7 +472,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         if get_cfg("aparc_parc"):
             p.set_defaults(aparc_parc=str(get_cfg("aparc_parc")))
         if get_cfg("aparc_measures") is not None:
-            p.set_defaults(aparc_measures=_coerce_list(get_cfg("aparc_measures")) or ["thickness", "area", "volume"])
+            p.set_defaults(
+                aparc_measures=_coerce_list(get_cfg("aparc_measures"))
+                or ["thickness", "area", "volume"]
+            )
         if get_cfg("aparc_hemis") is not None:
             p.set_defaults(aparc_hemis=_coerce_list(get_cfg("aparc_hemis")) or ["lh", "rh"])
         if get_cfg("skip_sub") is not None:
@@ -361,11 +524,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 def prepare_output_directory(output_path: Path, force: bool = False) -> bool:
     """
     Prepare output directory, creating it if needed and handling overwrite confirmation.
-    
+
     Args:
         output_path: The output directory path
         force: If True, skip overwrite confirmation
-        
+
     Returns:
         True if directory is ready to use, False if user declined overwrite
     """
@@ -373,33 +536,35 @@ def prepare_output_directory(output_path: Path, force: bool = False) -> bool:
     if not output_path.exists():
         output_path.mkdir(parents=True, exist_ok=True)
         return True
-    
+
     # Directory exists - check if it's empty or if we should ask for confirmation
     if not force:
         try:
             # Check if directory has any files (ignore hidden files starting with .)
-            files = [f for f in output_path.iterdir() if not f.name.startswith('.')]
+            files = [f for f in output_path.iterdir() if not f.name.startswith(".")]
             if files:
-                print(f"[WARN] Output directory '{output_path}' is not empty and contains {len(files)} items.")
+                print(
+                    f"[WARN] Output directory '{output_path}' is not empty and contains {len(files)} items."
+                )
                 print("Files/directories found:")
                 for i, f in enumerate(files[:5]):  # Show first 5 items
                     print(f"  - {f.name}")
                 if len(files) > 5:
                     print(f"  ... and {len(files) - 5} more items")
-                
+
                 while True:
                     response = input("Do you want to overwrite/continue? [y/N]: ").strip().lower()
-                    if response in ('y', 'yes'):
+                    if response in ("y", "yes"):
                         print("[INFO] Continuing with existing output directory.")
                         return True
-                    elif response in ('n', 'no', ''):
+                    elif response in ("n", "no", ""):
                         print("[INFO] Operation cancelled by user.")
                         return False
                     else:
                         print("Please enter 'y' for yes or 'n' for no.")
         except Exception as e:
             print(f"[WARN] Could not check directory contents: {e}", file=sys.stderr)
-    
+
     return True
 
 
@@ -614,7 +779,9 @@ def summarize_consistency(
       - if BIDS is provided: subjects/sessions present in BIDS but missing elsewhere
     """
     # Participants sets
-    parts_subjects: Set[str] = set(r.get(participant_col, "") for r in participants_rows if r.get(participant_col))
+    parts_subjects: Set[str] = set(
+        r.get(participant_col, "") for r in participants_rows if r.get(participant_col)
+    )
     parts_pairs: Set[Tuple[str, str]] = set()
     if session_col:
         for r in participants_rows:
@@ -640,13 +807,23 @@ def summarize_consistency(
     only_in_participants = sorted(parts_subjects - sd_subjects)
     only_in_subjects_dir = sorted(sd_subjects - parts_subjects)
     if only_in_participants:
-        print(f"Subjects in participants.tsv but missing in subjects_dir: {len(only_in_participants)}")
+        print(
+            f"Subjects in participants.tsv but missing in subjects_dir: {len(only_in_participants)}"
+        )
         limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
-        print(", ".join(only_in_participants[:limit]) + (" ..." if len(only_in_participants) > limit else ""))
+        print(
+            ", ".join(only_in_participants[:limit])
+            + (" ..." if len(only_in_participants) > limit else "")
+        )
     if only_in_subjects_dir:
-        print(f"Subjects in subjects_dir but missing in participants.tsv: {len(only_in_subjects_dir)}")
+        print(
+            f"Subjects in subjects_dir but missing in participants.tsv: {len(only_in_subjects_dir)}"
+        )
         limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
-        print(", ".join(only_in_subjects_dir[:limit]) + (" ..." if len(only_in_subjects_dir) > limit else ""))
+        print(
+            ", ".join(only_in_subjects_dir[:limit])
+            + (" ..." if len(only_in_subjects_dir) > limit else "")
+        )
 
     if bids_root:
         bids_subjects, bids_pairs = scan_bids_subjects(bids_root)
@@ -657,11 +834,17 @@ def summarize_consistency(
         if missing_in_sd:
             print(f"BIDS subjects missing in subjects_dir: {len(missing_in_sd)}")
             if missing_in_sd != only_in_participants:
-                print(", ".join(missing_in_sd[:limit]) + (" ..." if len(missing_in_sd) > limit else ""))
+                print(
+                    ", ".join(missing_in_sd[:limit])
+                    + (" ..." if len(missing_in_sd) > limit else "")
+                )
         if missing_in_parts:
             print(f"BIDS subjects missing in participants.tsv: {len(missing_in_parts)}")
             if missing_in_parts != only_in_subjects_dir:
-                print(", ".join(missing_in_parts[:limit]) + (" ..." if len(missing_in_parts) > limit else ""))
+                print(
+                    ", ".join(missing_in_parts[:limit])
+                    + (" ..." if len(missing_in_parts) > limit else "")
+                )
 
 
 def write_qdec(output_path: Path, header: List[str], rows: List[List[str]]) -> None:
@@ -673,7 +856,9 @@ def write_qdec(output_path: Path, header: List[str], rows: List[List[str]]) -> N
             writer.writerow(row)
 
 
-def _ensure_symlink(link_path: Path, target_path: Path, dry_run: bool = True, force: bool = False) -> Tuple[bool, str]:
+def _ensure_symlink(
+    link_path: Path, target_path: Path, dry_run: bool = True, force: bool = False
+) -> Tuple[bool, str]:
     """Ensure link_path is a symlink to target_path.
 
     Returns (changed, message)
@@ -689,7 +874,10 @@ def _ensure_symlink(link_path: Path, target_path: Path, dry_run: bool = True, fo
         if current and current == target_path.resolve():
             return False, f"exists (correct symlink): {link_path} -> {target_path}"
         if not force:
-            return False, f"exists (symlink to different target, use --link-force to update): {link_path}"
+            return (
+                False,
+                f"exists (symlink to different target, use --link-force to update): {link_path}",
+            )
         if not dry_run:
             link_path.unlink()
             link_path.symlink_to(target_path, target_is_directory=True)
@@ -819,15 +1007,18 @@ def run_asegstats2table(qdec_path: Path, subjects_dir: Path) -> int:
     print(f"Running: {' '.join(cmd)} (with SUBJECTS_DIR={env['SUBJECTS_DIR']})")
 
     try:
-        result = subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
+        subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
         error_output = exc.stderr or exc.stdout or ""
-        if "IndexError: list index out of range" in error_output or "list index out of range" in error_output:
+        if (
+            "IndexError: list index out of range" in error_output
+            or "list index out of range" in error_output
+        ):
             print(
-                f"asegstats2table failed because no valid longitudinal data was found. "
-                f"This likely means .long directories are missing or don't contain proper stats files. "
-                f"Try using --link-long to create the required symlinks first, or check that FastSurfer/FreeSurfer "
-                f"processing completed successfully for the timepoints.",
+                "asegstats2table failed because no valid longitudinal data was found. "
+                "This likely means .long directories are missing or don't contain proper stats files. "
+                "Try using --link-long to create the required symlinks first, or check that FastSurfer/FreeSurfer "
+                "processing completed successfully for the timepoints.",
                 file=sys.stderr,
             )
         else:
@@ -864,8 +1055,15 @@ def run_surf_mass_univariate(
     mris_preproc_bin = shutil.which("mris_preproc")
     surf2surf_bin = shutil.which("mri_surf2surf")
     if not mris_preproc_bin or not surf2surf_bin:
-        missing = [n for n, b in [("mris_preproc", mris_preproc_bin), ("mri_surf2surf", surf2surf_bin)] if not b]
-        print(f"[WARN] Missing FreeSurfer binaries: {', '.join(missing)}. Skipping surface prep.", file=sys.stderr)
+        missing = [
+            n
+            for n, b in [("mris_preproc", mris_preproc_bin), ("mri_surf2surf", surf2surf_bin)]
+            if not b
+        ]
+        print(
+            f"[WARN] Missing FreeSurfer binaries: {', '.join(missing)}. Skipping surface prep.",
+            file=sys.stderr,
+        )
         return 8
 
     # Verify target surface template exists under subjects_dir (eg, subjects_dir/fsaverage)
@@ -889,9 +1087,14 @@ def run_surf_mass_univariate(
     if not dry_run:
         try:
             tps = scan_subjects_dir(subjects_dir)
-            verify_and_link_long(subjects_dir, tps, link=True, dry_run=False, force=False, require_stats=False)
+            verify_and_link_long(
+                subjects_dir, tps, link=True, dry_run=False, force=False, require_stats=False
+            )
         except Exception as e:
-            print(f"[WARN] Failed to auto-link .long symlinks before surface prep: {e}", file=sys.stderr)
+            print(
+                f"[WARN] Failed to auto-link .long symlinks before surface prep: {e}",
+                file=sys.stderr,
+            )
     else:
         print("[INFO] Skipping automatic .long symlink creation due to dry-run mode.")
 
@@ -944,11 +1147,15 @@ def run_surf_mass_univariate(
             writer.writerow(header)
             for r in kept_rows:
                 writer.writerow(r)
-        print(f"[INFO] Filtered QDEC for {hemi}/{meas}: kept={len(kept_rows)}, dropped={dropped} -> {filt_path}")
+        print(
+            f"[INFO] Filtered QDEC for {hemi}/{meas}: kept={len(kept_rows)}, dropped={dropped} -> {filt_path}"
+        )
         return filt_path, len(kept_rows), dropped, dropped_pairs
 
     # QC summary rows
-    qc_rows: List[List[str]] = [["hemi", "measure", "kept", "dropped", "filtered_qdec", "missing_list"]]
+    qc_rows: List[List[str]] = [
+        ["hemi", "measure", "kept", "dropped", "filtered_qdec", "missing_list"]
+    ]
 
     for hemi in hemis:
         for meas in measures:
@@ -963,7 +1170,10 @@ def run_surf_mass_univariate(
             # Build filtered QDEC (drop rows missing the required surf file)
             qdec_for_pair, kept, dropped, dropped_pairs = build_filtered_qdec_for(hemi, meas)
             if kept == 0:
-                print(f"[WARN] Skipping surface prep for {hemi}/{meas}: no subjects with existing surf files.", file=sys.stderr)
+                print(
+                    f"[WARN] Skipping surface prep for {hemi}/{meas}: no subjects with existing surf files.",
+                    file=sys.stderr,
+                )
                 # record QC row with zero kept
                 qc_rows.append([hemi, meas, str(kept), str(dropped), str(qdec_for_pair), ""])
                 continue
@@ -987,18 +1197,26 @@ def run_surf_mass_univariate(
             # mris_preproc
             cmd1 = [
                 mris_preproc_bin,
-                "--qdec-long", str(qdec_for_pair),
-                "--target", target,
-                "--hemi", hemi,
-                "--meas", meas,
-                "--out", str(pre_path),
+                "--qdec-long",
+                str(qdec_for_pair),
+                "--target",
+                target,
+                "--hemi",
+                hemi,
+                "--meas",
+                meas,
+                "--out",
+                str(pre_path),
             ]
             print(f"Running: {' '.join(cmd1)} (with SUBJECTS_DIR={env['SUBJECTS_DIR']})")
             if not dry_run:
                 try:
                     subprocess.run(cmd1, check=True, env=env)
                 except subprocess.CalledProcessError as exc:
-                    print(f"mris_preproc failed (hemi={hemi}, meas={meas}) with code {exc.returncode}", file=sys.stderr)
+                    print(
+                        f"mris_preproc failed (hemi={hemi}, meas={meas}) with code {exc.returncode}",
+                        file=sys.stderr,
+                    )
                     return exc.returncode or 9
             else:
                 print("[DRY-RUN] Would execute mris_preproc command above")
@@ -1012,11 +1230,16 @@ def run_surf_mass_univariate(
                         pass
                 cmd2 = [
                     surf2surf_bin,
-                    "--hemi", hemi,
-                    "--s", target,
-                    "--sval", str(pre_path),
-                    "--tval", str(sm_path),
-                    "--fwhm-trg", str(fwhm),
+                    "--hemi",
+                    hemi,
+                    "--s",
+                    target,
+                    "--sval",
+                    str(pre_path),
+                    "--tval",
+                    str(sm_path),
+                    "--fwhm-trg",
+                    str(fwhm),
                     "--cortex",
                     "--noreshape",
                 ]
@@ -1025,7 +1248,10 @@ def run_surf_mass_univariate(
                     try:
                         subprocess.run(cmd2, check=True, env=env)
                     except subprocess.CalledProcessError as exc:
-                        print(f"mri_surf2surf failed (hemi={hemi}, meas={meas}, fwhm={fwhm}) with code {exc.returncode}", file=sys.stderr)
+                        print(
+                            f"mri_surf2surf failed (hemi={hemi}, meas={meas}, fwhm={fwhm}) with code {exc.returncode}",
+                            file=sys.stderr,
+                        )
                         return exc.returncode or 10
                     print(f"Wrote: {pre_path}\nWrote: {sm_path}")
                 else:
@@ -1081,11 +1307,15 @@ def run_fsqc(
     if not fsqc_bin:
         # If run_fsqc not in PATH, check if fsqc module is available and try to run it via python -m
         try:
-            import fsqc
+            import fsqc  # noqa: F401
+
             # Use python -m fsqc instead of run_fsqc command
             fsqc_command = [sys.executable, "-m", "fsqc"]
         except ImportError:
-            print("[WARN] fsqc not found (run_fsqc command or Python module). Skipping --qc step. Install with: bash scripts/install.sh", file=sys.stderr)
+            print(
+                "[WARN] fsqc not found (run_fsqc command or Python module). Skipping --qc step. Install with: bash scripts/install.sh",
+                file=sys.stderr,
+            )
             return 0
     else:
         fsqc_command = [fsqc_bin]
@@ -1122,16 +1352,21 @@ def run_fsqc(
     # Detect headless environment (no DISPLAY) and auto-disable surfaces to avoid OpenGL/GLFW errors
     try:
         disp = os.environ.get("DISPLAY", "").strip()
-        headless = (disp == "")
+        headless = disp == ""
     except Exception:
         headless = True
     if surfaces and headless:
-        print("[INFO] No DISPLAY detected; disabling fsqc surfaces module to avoid OpenGL errors.", file=sys.stderr)
+        print(
+            "[INFO] No DISPLAY detected; disabling fsqc surfaces module to avoid OpenGL errors.",
+            file=sys.stderr,
+        )
         surfaces = False
 
     cmd = fsqc_command + [
-        "--subjects_dir", str(subjects_dir),
-        "--output_dir", str(out_root),
+        "--subjects_dir",
+        str(subjects_dir),
+        "--output_dir",
+        str(out_root),
     ]
     # subject list; run_fsqc expects subject IDs (timepoints or bases)
     cmd += ["--subjects", *subjects]
@@ -1161,7 +1396,10 @@ def run_fsqc(
         subprocess.run(cmd, check=True, env=env)
         print(f"Wrote fsqc outputs to: {out_root}")
     except subprocess.CalledProcessError as exc:
-        print(f"[WARN] fsqc failed with exit code {exc.returncode}; continuing. Command: {' '.join(cmd)}", file=sys.stderr)
+        print(
+            f"[WARN] fsqc failed with exit code {exc.returncode}; continuing. Command: {' '.join(cmd)}",
+            file=sys.stderr,
+        )
         return 0
     return 0
 
@@ -1220,10 +1458,13 @@ def run_aparcstats2table(
 
     if not chosen_parc:
         print(
-            f"[WARN] No aparc stats files found for any of parcs {candidate_parcs} and hemis={hemis} under {subjects_dir}. Skipping aparc tables.")
+            f"[WARN] No aparc stats files found for any of parcs {candidate_parcs} and hemis={hemis} under {subjects_dir}. Skipping aparc tables."
+        )
         return 0
     if chosen_parc != parc:
-        print(f"[INFO] Using detected parcellation '{chosen_parc}' for aparc tables (requested '{parc}').")
+        print(
+            f"[INFO] Using detected parcellation '{chosen_parc}' for aparc tables (requested '{parc}')."
+        )
     parc = chosen_parc
 
     for hemi in hemis:
@@ -1263,18 +1504,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not argv:
         parse_args(["-h"])
         return 0
-    
+
     args = parse_args(argv)
-    
+
     # Early dependency check
     missing_deps = check_dependencies(args)
     if missing_deps:
         print("ERROR: Missing required dependencies:", file=sys.stderr)
         for dep in missing_deps:
             print(f"  - {dep}", file=sys.stderr)
-        print("\nPlease install missing dependencies and ensure FreeSurfer is properly sourced.", file=sys.stderr)
+        print(
+            "\nPlease install missing dependencies and ensure FreeSurfer is properly sourced.",
+            file=sys.stderr,
+        )
         return 1
-    
+
     # Existence checks
     if not args.participants.exists():
         print(f"ERROR: participants.tsv not found: {args.participants}", file=sys.stderr)
@@ -1295,7 +1539,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     timepoints = scan_subjects_dir(subj_dir)
     # Quick overview for the user: number of bases and timepoints
     bases: Set[str] = set(tp[1] for tp in timepoints)
-    print(f"[INFO] Subjects overview: bases={len(bases)}, timepoints={len(timepoints)} in {subj_dir}")
+    print(
+        f"[INFO] Subjects overview: bases={len(bases)}, timepoints={len(timepoints)} in {subj_dir}"
+    )
 
     # Build skip set from CLI options
     skip_set: Set[str] = set()
@@ -1334,7 +1580,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     qdec_filename = "qdec.table.dat"
     out_path: Path
     try:
-        is_file_like = any(str(out_root).lower().endswith(ext) for ext in (".dat", ".tsv", ".table"))
+        is_file_like = any(
+            str(out_root).lower().endswith(ext) for ext in (".dat", ".tsv", ".table")
+        )
         if is_file_like:
             # Backwards-compat: user provided a file path
             out_path = out_root
@@ -1363,7 +1611,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Detect headless environment early to reflect in effective config and downstream calls
     try:
         _disp = os.environ.get("DISPLAY", "").strip()
-        _headless = (_disp == "")
+        _headless = _disp == ""
     except Exception:
         _headless = True
     qc_surfaces_effective = bool(getattr(args, "qc_surfaces", False))
@@ -1396,7 +1644,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             "surf_target": args.surf_target,
             "surf_measures": args.surf_measures,
             "surf_hemis": args.surf_hemis,
-            "smooth": _coerce_int_list(getattr(args, "smooth", None)) or [int(args.surf_fwhm)] if hasattr(args, "surf_fwhm") else None,
+            "smooth": (
+                _coerce_int_list(getattr(args, "smooth", None)) or [int(args.surf_fwhm)]
+                if hasattr(args, "surf_fwhm")
+                else None
+            ),
             "surf_outdir": str(args.surf_outdir) if args.surf_outdir else None,
             "qc": bool(args.qc),
             "qc_output": str(args.qc_output) if args.qc_output else None,
@@ -1422,7 +1674,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as e:
         print(f"[WARN] Failed to write effective config JSON: {e}", file=sys.stderr)
     # Optional consistency summary
-    summarize_consistency(args.bids, subj_dir, participants_rows, participant_col, session_col, timepoints)
+    summarize_consistency(
+        args.bids, subj_dir, participants_rows, participant_col, session_col, timepoints
+    )
     # Optional FastSurfer .long symlink verification/creation for FreeSurfer tools compatibility
     if args.verify_long or args.link_long:
         verify_and_link_long(
@@ -1436,18 +1690,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Optional tables
     if args.aseg:
         if args.link_dry_run:
-            print("[INFO] Skipping asegstats2table due to --link-dry-run (symlinks not actually created).")
+            print(
+                "[INFO] Skipping asegstats2table due to --link-dry-run (symlinks not actually created)."
+            )
         elif shutil.which("asegstats2table") is None:
-            print("[WARN] asegstats2table not found in PATH; skipping --aseg. Ensure FreeSurfer is sourced.", file=sys.stderr)
+            print(
+                "[WARN] asegstats2table not found in PATH; skipping --aseg. Ensure FreeSurfer is sourced.",
+                file=sys.stderr,
+            )
         else:
             rc = run_asegstats2table(out_path, subj_dir)
             if rc != 0:
                 return rc
     if args.aparc:
         if args.link_dry_run:
-            print("[INFO] Skipping aparcstats2table due to --link-dry-run (symlinks not actually created).")
+            print(
+                "[INFO] Skipping aparcstats2table due to --link-dry-run (symlinks not actually created)."
+            )
         elif shutil.which("aparcstats2table") is None:
-            print("[WARN] aparcstats2table not found in PATH; skipping --aparc. Ensure FreeSurfer is sourced.", file=sys.stderr)
+            print(
+                "[WARN] aparcstats2table not found in PATH; skipping --aparc. Ensure FreeSurfer is sourced.",
+                file=sys.stderr,
+            )
         else:
             rc = run_aparcstats2table(
                 out_path,
@@ -1463,8 +1727,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         have_mris = shutil.which("mris_preproc") is not None
         have_surf2 = shutil.which("mri_surf2surf") is not None
         if not (have_mris and have_surf2):
-            missing = [n for n, ok in (("mris_preproc", have_mris), ("mri_surf2surf", have_surf2)) if not ok]
-            print(f"[WARN] Missing FreeSurfer binaries ({', '.join(missing)}); skipping --surf.", file=sys.stderr)
+            missing = [
+                n
+                for n, ok in (("mris_preproc", have_mris), ("mri_surf2surf", have_surf2))
+                if not ok
+            ]
+            print(
+                f"[WARN] Missing FreeSurfer binaries ({', '.join(missing)}); skipping --surf.",
+                file=sys.stderr,
+            )
         else:
             # Determine smoothing kernels list
             smooth_list = _coerce_int_list(getattr(args, "smooth", None))

@@ -18,3 +18,5 @@ dependencies:
   - r-matrix
   - r-rcpp
   - r-rcpparmadillo
+  - black
+  - flake8

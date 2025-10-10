@@ -45,7 +45,12 @@ SES_NUM_PATTERN = re.compile(r"^ses-(?P<num>\d+)$")
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generate FreeSurfer longitudinal Qdec file")
     p.add_argument("--participants", required=True, type=Path, help="Path to BIDS participants.tsv")
-    p.add_argument("--subjects-dir", required=True, type=Path, help="Path to FastSurfer/FreeSurfer subjects directory")
+    p.add_argument(
+        "--subjects-dir",
+        required=True,
+        type=Path,
+        help="Path to FastSurfer/FreeSurfer subjects directory",
+    )
     p.add_argument(
         "--output",
         type=Path,
@@ -55,27 +60,76 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             "If a directory path is provided, the file 'qdec.table.dat' will be created inside it."
         ),
     )
-    p.add_argument("--participant-column", default="participant_id", help="Column name for participant id (default: participant_id)")
-    p.add_argument("--session-column", default="session_id", help="Column name for session id if present (default: session_id)")
+    p.add_argument(
+        "--participant-column",
+        default="participant_id",
+        help="Column name for participant id (default: participant_id)",
+    )
+    p.add_argument(
+        "--session-column",
+        default="session_id",
+        help="Column name for session id if present (default: session_id)",
+    )
     p.add_argument(
         "--include-columns",
         nargs="*",
         default=None,
         help="Optional explicit list of covariate columns to include from participants.tsv. "
-             "If omitted, include all columns except participant and session columns.",
+        "If omitted, include all columns except participant and session columns.",
     )
-    p.add_argument("--strict", action="store_true", help="Fail if a subjects_dir timepoint has no matching participants row")
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail if a subjects_dir timepoint has no matching participants row",
+    )
     p.add_argument("--inspect", action="store_true", help="Print participants.tsv columns and exit")
-    p.add_argument("--bids", type=Path, default=None, help="Optional BIDS root to cross-check subjects/sessions consistency")
-    p.add_argument("--list-limit", type=int, default=20, help="Max number of IDs to show when listing missing subjects (default: 20)")
+    p.add_argument(
+        "--bids",
+        type=Path,
+        default=None,
+        help="Optional BIDS root to cross-check subjects/sessions consistency",
+    )
+    p.add_argument(
+        "--list-limit",
+        type=int,
+        default=20,
+        help="Max number of IDs to show when listing missing subjects (default: 20)",
+    )
     # FastSurfer compatibility with FreeSurfer .long directories
-    p.add_argument("--verify-long", action="store_true", help="Verify presence of <fsid>.long.<base>/stats/aseg.stats for each timepoint")
-    p.add_argument("--link-long", action="store_true", help="Create <fsid>.long.<base> symlinks pointing to the timepoint directories when missing")
-    p.add_argument("--link-dry-run", action="store_true", help="Print the symlink actions without making changes")
-    p.add_argument("--link-force", action="store_true", help="If an existing symlink points elsewhere, replace it (does not delete real directories)")
-    p.add_argument("--aseg", action="store_true", help="After writing QDEC, run asegstats2table and store aseg.long.table alongside it")
-    p.add_argument("--skip-sub", default=None, help="Comma-separated fsid_base IDs to skip (exclude) from QDEC")
-    p.add_argument("--skip-file", type=Path, default=None, help="File with fsid_base IDs (one per line) to skip from QDEC")
+    p.add_argument(
+        "--verify-long",
+        action="store_true",
+        help="Verify presence of <fsid>.long.<base>/stats/aseg.stats for each timepoint",
+    )
+    p.add_argument(
+        "--link-long",
+        action="store_true",
+        help="Create <fsid>.long.<base> symlinks pointing to the timepoint directories when missing",
+    )
+    p.add_argument(
+        "--link-dry-run",
+        action="store_true",
+        help="Print the symlink actions without making changes",
+    )
+    p.add_argument(
+        "--link-force",
+        action="store_true",
+        help="If an existing symlink points elsewhere, replace it (does not delete real directories)",
+    )
+    p.add_argument(
+        "--aseg",
+        action="store_true",
+        help="After writing QDEC, run asegstats2table and store aseg.long.table alongside it",
+    )
+    p.add_argument(
+        "--skip-sub", default=None, help="Comma-separated fsid_base IDs to skip (exclude) from QDEC"
+    )
+    p.add_argument(
+        "--skip-file",
+        type=Path,
+        default=None,
+        help="File with fsid_base IDs (one per line) to skip from QDEC",
+    )
     return p.parse_args(argv)
 
 
@@ -290,7 +344,9 @@ def summarize_consistency(
       - if BIDS is provided: subjects/sessions present in BIDS but missing elsewhere
     """
     # Participants sets
-    parts_subjects: Set[str] = set(r.get(participant_col, "") for r in participants_rows if r.get(participant_col))
+    parts_subjects: Set[str] = set(
+        r.get(participant_col, "") for r in participants_rows if r.get(participant_col)
+    )
     parts_pairs: Set[Tuple[str, str]] = set()
     if session_col:
         for r in participants_rows:
@@ -316,13 +372,23 @@ def summarize_consistency(
     only_in_participants = sorted(parts_subjects - sd_subjects)
     only_in_subjects_dir = sorted(sd_subjects - parts_subjects)
     if only_in_participants:
-        print(f"Subjects in participants.tsv but missing in subjects_dir: {len(only_in_participants)}")
+        print(
+            f"Subjects in participants.tsv but missing in subjects_dir: {len(only_in_participants)}"
+        )
         limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
-        print(", ".join(only_in_participants[:limit]) + (" ..." if len(only_in_participants) > limit else ""))
+        print(
+            ", ".join(only_in_participants[:limit])
+            + (" ..." if len(only_in_participants) > limit else "")
+        )
     if only_in_subjects_dir:
-        print(f"Subjects in subjects_dir but missing in participants.tsv: {len(only_in_subjects_dir)}")
+        print(
+            f"Subjects in subjects_dir but missing in participants.tsv: {len(only_in_subjects_dir)}"
+        )
         limit = getattr(sys.modules[__name__], "_LIST_LIMIT", 20)
-        print(", ".join(only_in_subjects_dir[:limit]) + (" ..." if len(only_in_subjects_dir) > limit else ""))
+        print(
+            ", ".join(only_in_subjects_dir[:limit])
+            + (" ..." if len(only_in_subjects_dir) > limit else "")
+        )
 
     if bids_root:
         bids_subjects, bids_pairs = scan_bids_subjects(bids_root)
@@ -335,13 +401,18 @@ def summarize_consistency(
         if missing_in_sd:
             print(f"BIDS subjects missing in subjects_dir: {len(missing_in_sd)}")
             if missing_in_sd != only_in_participants:
-                print(", ".join(missing_in_sd[:limit]) + (" ..." if len(missing_in_sd) > limit else ""))
+                print(
+                    ", ".join(missing_in_sd[:limit])
+                    + (" ..." if len(missing_in_sd) > limit else "")
+                )
         if missing_in_parts:
             print(f"BIDS subjects missing in participants.tsv: {len(missing_in_parts)}")
             # This is generally different; still avoid printing if equal to only_in_subjects_dir
             if missing_in_parts != only_in_subjects_dir:
-                print(", ".join(missing_in_parts[:limit]) + (" ..." if len(missing_in_parts) > limit else ""))
-
+                print(
+                    ", ".join(missing_in_parts[:limit])
+                    + (" ..." if len(missing_in_parts) > limit else "")
+                )
 
 
 def write_qdec(output_path: Path, header: List[str], rows: List[List[str]]) -> None:
@@ -353,7 +424,9 @@ def write_qdec(output_path: Path, header: List[str], rows: List[List[str]]) -> N
             writer.writerow(row)
 
 
-def _ensure_symlink(link_path: Path, target_path: Path, dry_run: bool = True, force: bool = False) -> Tuple[bool, str]:
+def _ensure_symlink(
+    link_path: Path, target_path: Path, dry_run: bool = True, force: bool = False
+) -> Tuple[bool, str]:
     """Ensure link_path is a symlink to target_path.
 
     Returns (changed, message)
@@ -369,7 +442,10 @@ def _ensure_symlink(link_path: Path, target_path: Path, dry_run: bool = True, fo
         if current and current == target_path.resolve():
             return False, f"exists (correct symlink): {link_path} -> {target_path}"
         if not force:
-            return False, f"exists (symlink to different target, use --link-force to update): {link_path}"
+            return (
+                False,
+                f"exists (symlink to different target, use --link-force to update): {link_path}",
+            )
         if not dry_run:
             link_path.unlink()
             link_path.symlink_to(target_path, target_is_directory=True)
@@ -434,7 +510,9 @@ def verify_and_link_long(
                 skipped += 1
             print(msg)
         else:
-            print(f"would link: {long_dir} -> {tp_dir} (use --link-long to create){' [MISSING]' if not stats_path.exists() else ''}")
+            print(
+                f"would link: {long_dir} -> {tp_dir} (use --link-long to create){' [MISSING]' if not stats_path.exists() else ''}"
+            )
             skipped += 1
 
     print("=== Long symlink verification ===")
@@ -494,7 +572,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"ERROR: participants.tsv not found: {args.participants}", file=sys.stderr)
         return 2
     if not args.subjects_dir.exists() or not args.subjects_dir.is_dir():
-        print(f"ERROR: subjects_dir not found or not a directory: {args.subjects_dir}", file=sys.stderr)
+        print(
+            f"ERROR: subjects_dir not found or not a directory: {args.subjects_dir}",
+            file=sys.stderr,
+        )
         return 2
 
     fieldnames, participants_rows, participant_col, session_col = read_participants(
@@ -553,7 +634,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     write_qdec(out_path, header, rows)
     print(f"Wrote Qdec file: {out_path}")
     # Optional consistency summary
-    summarize_consistency(args.bids, args.subjects_dir, participants_rows, participant_col, session_col, timepoints)
+    summarize_consistency(
+        args.bids, args.subjects_dir, participants_rows, participant_col, session_col, timepoints
+    )
     # Optional FastSurfer .long symlink verification/creation for FreeSurfer tools compatibility
     if args.verify_long or args.link_long:
         verify_and_link_long(
