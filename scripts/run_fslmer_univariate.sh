@@ -137,8 +137,8 @@ if [[ $? -eq 0 ]]; then
         echo "Generating summary report..." >&2
         SUMMARIZE_SCRIPT="scripts/fslmer_summarize.R"
         if [[ -f "$SUMMARIZE_SCRIPT" ]]; then
-            # Use sexM as default effect for single ROI analyses
-            $RSCRIPT_CMD "$SUMMARIZE_SCRIPT" --results-dir "$OUTDIR" --effect "sexM" --verbose
+            # Use ALL effects for comprehensive summary
+            $RSCRIPT_CMD "$SUMMARIZE_SCRIPT" --results-dir "$OUTDIR" --effect "ALL" --verbose
         else
             echo "Warning: Summary script not found at $SUMMARIZE_SCRIPT" >&2
         fi

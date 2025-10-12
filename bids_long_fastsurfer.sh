@@ -35,6 +35,7 @@ Behavior:
        OUTPUT_DIR -> /output
        license parent dir -> /fs_license
   - License passed as: --fs_license /fs_license/license.txt
+  - Skips subjects that are already fully processed (all timepoint directories exist in OUTPUT_DIR)
 
 JSON Structure Example:
 {
@@ -269,6 +270,22 @@ if [[ $AUTO -eq 0 ]]; then
     [[ $DEBUG -eq 1 ]] && {
       echo "[DEBUG] TPID=${tpid}"; echo "[DEBUG] Host T1=${t1_candidate}"; echo "[DEBUG] Container T1=${container_t1}"; }
   done
+  
+  # Check if subject is already fully processed (all timepoint directories exist)
+  subject_fully_processed=1
+  for tpid in "${TPIDS[@]}"; do
+    expected_dir="${OUTPUT_DIR%/}/${tpid}"
+    if [[ ! -d "$expected_dir" ]]; then
+      subject_fully_processed=0
+      break
+    fi
+  done
+  
+  if [[ $subject_fully_processed -eq 1 ]]; then
+    echo "[SKIP] ${TEMPLATE_SUBJECT} already fully processed (${#TPIDS[@]} sessions) - skipping"
+    exit 0
+  fi
+  
   cmd=( singularity exec --nv --no-home -B "${BIDS_ROOT%/}":/data -B "${OUTPUT_DIR%/}":/output -B "${LICENSE_DIR}":/fs_license "${SIF_FILE}" /fastsurfer/long_fastsurfer.sh --tid "${TEMPLATE_SUBJECT}" --t1s "${T1_PATHS[@]}" --tpids "${TPIDS[@]}" --sd /output --fs_license /fs_license/license.txt --py "${PYTHON_CMD}" )
   if [[ ${#LONG_OPTS[@]} -gt 0 ]]; then cmd+=( "${LONG_OPTS[@]}" ); fi
   if [[ $DEBUG -eq 1 ]]; then
@@ -320,6 +337,22 @@ else
     done
     [[ $skip -eq 1 ]] && continue
     if [[ ${#TPIDS_LOCAL[@]} -lt 2 ]]; then [[ $DEBUG -eq 1 ]] && echo "[AUTO][SKIP] $sbase insufficient valid sessions"; continue; fi
+    
+    # Check if subject is already fully processed (all timepoint directories exist)
+    subject_fully_processed=1
+    for tpid in "${TPIDS_LOCAL[@]}"; do
+      expected_dir="${OUTPUT_DIR%/}/${tpid}"
+      if [[ ! -d "$expected_dir" ]]; then
+        subject_fully_processed=0
+        break
+      fi
+    done
+    
+    if [[ $subject_fully_processed -eq 1 ]]; then
+      echo "[AUTO][SKIP] $sbase already fully processed (${#TPIDS_LOCAL[@]} sessions) - skipping"
+      continue
+    fi
+    
     cmd=( singularity exec --nv --no-home -B "${BIDS_ROOT%/}":/data -B "${OUTPUT_DIR%/}":/output -B "${LICENSE_DIR}":/fs_license "${SIF_FILE}" /fastsurfer/long_fastsurfer.sh --tid "$sbase" --t1s "${T1_PATHS_LOCAL[@]}" --tpids "${TPIDS_LOCAL[@]}" --sd /output --fs_license /fs_license/license.txt --py "${PYTHON_CMD}" )
     if [[ ${#LONG_OPTS[@]} -gt 0 ]]; then cmd+=("${LONG_OPTS[@]}"); fi
     echo "[AUTO] Subject $sbase (${#TPIDS_LOCAL[@]} sessions)"

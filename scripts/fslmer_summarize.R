@@ -9,8 +9,8 @@ suppressPackageStartupMessages({
 option_list <- list(
   make_option("--results-dir", type = "character", default = NULL,
               help = "Directory containing fslmer outputs (used_config.json, individual_rois/, etc.)"),
-  make_option("--effect", type = "character", default = "tp:sexM",
-              help = "Coefficient name to summarise (default: 'tp:sexM')"),
+  make_option("--effect", type = "character", default = "ALL",
+              help = "Coefficient name to summarise, or 'ALL' for all effects (default: 'ALL')"),
   make_option("--alpha", type = "double", default = 0.05,
               help = "Significance threshold (default: 0.05)"),
   make_option("--trend-alpha", type = "double", default = 0.1,
@@ -113,8 +113,16 @@ if (file.exists(coef_csv)) {
   stop("Neither lme_coefficients.csv nor fit.rds found in results directory")
 }
 
-effect_rows <- subset(coef_df, coef == opt$effect)
-if (!nrow(effect_rows)) stop(sprintf("Effect '%s' not found in results", opt$effect))
+if (opt$effect == "ALL") {
+  # Process all effects
+  effect_rows <- coef_df
+  single_effect_mode <- FALSE
+} else {
+  # Process single effect
+  effect_rows <- subset(coef_df, coef == opt$effect)
+  if (!nrow(effect_rows)) stop(sprintf("Effect '%s' not found in results", opt$effect))
+  single_effect_mode <- TRUE
+}
 
 roi_to_filename <- function(roi) gsub("[^A-Za-z0-9_-]", "_", roi)
 
@@ -130,9 +138,11 @@ if (is_multi_roi) {
 results <- list()
 messages <- character(0)
 
-for (i in seq_len(nrow(effect_rows))) {
-  roi <- effect_rows$roi[i]
-  beta <- effect_rows$beta[i]
+# Group effects by ROI
+roi_groups <- split(effect_rows, effect_rows$roi)
+
+for (roi in names(roi_groups)) {
+  roi_effects <- roi_groups[[roi]]
   
   if (is_multi_roi) {
     fit_path <- file.path(fit_dir, sprintf("%s_fit.rds", roi_to_filename(roi)))
@@ -155,63 +165,73 @@ for (i in seq_len(nrow(effect_rows))) {
     }
   }
   
-  if (!(opt$effect %in% coef_names)) {
-    messages <- c(messages, sprintf("[WARN] Effect '%s' not present in design for %s", opt$effect, roi))
-    next
-  }
-  idx <- match(opt$effect, coef_names)
-  se <- sqrt(fit$CovBhat[idx, idx])
-  z <- if (is.na(se) || se == 0) NA_real_ else beta / se
-  p <- if (is.na(z)) NA_real_ else 2 * pnorm(-abs(z))
-  category <- if (is.na(p)) {
-    "unknown"
-  } else if (p < opt$alpha) {
-    "significant"
-  } else if (p < opt$`trend-alpha`) {
-    "trend"
-  } else {
-    "non-significant"
-  }
-  # Some effects (e.g., derived design columns) are not ROI columns in merged data; handle gracefully
-  if (roi %in% names(dat)) {
-    roi_data <- dat[c("fsid", "fsid_base", "tp", "sex", roi)]
-    names(roi_data)[names(roi_data) == roi] <- "value"
-    roi_data <- roi_data[!is.na(roi_data$value) & !is.na(roi_data$tp), ]
-    n_subj <- length(unique(roi_data$fsid_base))
-  } else {
-    roi_data <- data.frame()
-    n_subj <- length(unique(dat$fsid_base))
-  }
+  # Process each effect for this ROI
+  for (i in seq_len(nrow(roi_effects))) {
+    effect_name <- roi_effects$coef[i]
+    beta <- roi_effects$beta[i]
+    
+    if (!(effect_name %in% coef_names)) {
+      messages <- c(messages, sprintf("[WARN] Effect '%s' not present in design for %s", effect_name, roi))
+      next
+    }
+    idx <- match(effect_name, coef_names)
+    se <- sqrt(fit$CovBhat[idx, idx])
+    z <- if (is.na(se) || se == 0) NA_real_ else beta / se
+    p <- if (is.na(z)) NA_real_ else 2 * pnorm(-abs(z))
+    category <- if (is.na(p)) {
+      "unknown"
+    } else if (p < opt$alpha) {
+      "significant"
+    } else if (p < opt$`trend-alpha`) {
+      "trend"
+    } else {
+      "non-significant"
+    }
+    
+    # Some effects (e.g., derived design columns) are not ROI columns in merged data; handle gracefully
+    if (roi %in% names(dat)) {
+      roi_data <- dat[c("fsid", "fsid_base", "tp", "sex", roi)]
+      names(roi_data)[names(roi_data) == roi] <- "value"
+      roi_data <- roi_data[!is.na(roi_data$value) & !is.na(roi_data$tp), ]
+      n_subj <- length(unique(roi_data$fsid_base))
+    } else {
+      roi_data <- data.frame()
+      n_subj <- length(unique(dat$fsid_base))
+    }
 
-  plot_path <- NA_character_
-  if (category == "significant" && nrow(roi_data) > 0) {
-    plot_obj <- ggplot(roi_data, aes(x = tp, y = value, color = sex, group = interaction(fsid_base, sex))) +
-      geom_line(alpha = 0.25) +
-      geom_point(alpha = 0.4, size = 1.5) +
-      stat_summary(aes(group = sex), fun = mean, geom = "line", linewidth = 1.1) +
-      stat_summary(aes(group = sex), fun = mean, geom = "point", size = 2.2, shape = 21, fill = "white", color = NA) +
-      labs(title = sprintf("%s — %s", roi, opt$effect),
-           x = "Time point (tp)",
-           y = roi,
-           color = "Sex") +
-      theme_minimal() +
-      theme(legend.position = "bottom")
-    plot_file <- file.path(plot_dir, sprintf("%s.png", roi_to_filename(roi)))
-    ggsave(plot_file, plot = plot_obj, width = 6.5, height = 4.5, dpi = 150)
-    plot_path <- normalizePath(plot_file)
-  }
+    plot_path <- NA_character_
+    if (category == "significant" && nrow(roi_data) > 0 && single_effect_mode) {
+      # Only create plots for single effect mode to avoid too many plots
+      plot_obj <- ggplot(roi_data, aes(x = tp, y = value, color = sex, group = interaction(fsid_base, sex))) +
+        geom_line(alpha = 0.25) +
+        geom_point(alpha = 0.4, size = 1.5) +
+        stat_summary(aes(group = sex), fun = mean, geom = "line", linewidth = 1.1) +
+        stat_summary(aes(group = sex), fun = mean, geom = "point", size = 2.2, shape = 21, fill = "white", color = NA) +
+        labs(title = sprintf("%s — %s", roi, effect_name),
+             x = "Time point (tp)",
+             y = roi,
+             color = "Sex") +
+        theme_minimal() +
+        theme(legend.position = "bottom")
+      plot_file <- file.path(plot_dir, sprintf("%s_%s.png", roi_to_filename(roi), gsub("[^A-Za-z0-9_-]", "_", effect_name)))
+      ggsave(plot_file, plot = plot_obj, width = 6.5, height = 4.5, dpi = 150)
+      plot_path <- normalizePath(plot_file)
+    }
 
-  results[[roi]] <- data.frame(
-    roi = roi,
-    beta = beta,
-    se = se,
-    z = z,
-    p = p,
-    category = category,
-    n_subjects = n_subj,
-    plot = plot_path,
-    stringsAsFactors = FALSE
-  )
+    result_key <- if (single_effect_mode) roi else paste(roi, effect_name, sep = " | ")
+    results[[result_key]] <- data.frame(
+      roi = roi,
+      effect = effect_name,
+      beta = beta,
+      se = se,
+      z = z,
+      p = p,
+      category = category,
+      n_subjects = n_subj,
+      plot = plot_path,
+      stringsAsFactors = FALSE
+    )
+  }
 }
 
 if (length(messages) && opt$verbose) cat(paste(messages, collapse = "\n"), "\n", file = stderr())
@@ -219,7 +239,7 @@ if (length(messages) && opt$verbose) cat(paste(messages, collapse = "\n"), "\n",
 summary_df <- if (length(results)) do.call(rbind, results) else data.frame()
 if (!nrow(summary_df)) stop("No ROI summaries computed")
 summary_df <- summary_df[order(summary_df$p), ]
-effect_slug <- gsub("[^A-Za-z0-9]+", "_", opt$effect)
+effect_slug <- if (single_effect_mode) gsub("[^A-Za-z0-9]+", "_", opt$effect) else "all_effects"
 summary_csv <- file.path(results_dir, sprintf("summary_%s.csv", effect_slug))
 write.csv(summary_df, summary_csv, row.names = FALSE)
 
@@ -240,7 +260,7 @@ html_lines <- c(
   "<html>",
   "<head>",
   "  <meta charset='utf-8'>",
-  sprintf("  <title>fslmer summary — %s</title>", opt$effect),
+  sprintf("  <title>fslmer summary — %s</title>", if (single_effect_mode) opt$effect else "all effects"),
   "  <style>",
   "body { font-family: Arial, sans-serif; margin: 1.5rem; background: #f9fafc; color: #222; }",
   "h1 { margin-bottom: 0.2rem; }",
@@ -255,7 +275,7 @@ html_lines <- c(
   "  </style>",
   "</head>",
   "<body>",
-  sprintf("<h1>fslmer summary — effect %s</h1>", opt$effect),
+  sprintf("<h1>fslmer summary — %s</h1>", if (single_effect_mode) paste("effect", opt$effect) else "all effects"),
   sprintf("<p class='meta'>Results directory: %s<br>Summary CSV: %s<br>Significant if p &lt; %.2f; trend if p &lt; %.2f.</p>",
           results_dir, basename(summary_csv), opt$alpha, opt$`trend-alpha`)
 )
@@ -270,21 +290,36 @@ for (cat in category_order) {
   df_cat <- subset(summary_df, category == cat)
   if (!nrow(df_cat)) next
   html_lines <- c(html_lines, sprintf("<h2>%s (%d)</h2>", tools::toTitleCase(cat), nrow(df_cat)))
-  html_lines <- c(html_lines, "<table>",
-                  "<tr><th>ROI</th><th>Beta</th><th>SE</th><th>Z</th><th>p-value</th><th>Subjects</th></tr>")
+  table_header <- if (single_effect_mode) {
+    "<tr><th>ROI</th><th>Beta</th><th>SE</th><th>Z</th><th>p-value</th><th>Subjects</th></tr>"
+  } else {
+    "<tr><th>ROI</th><th>Effect</th><th>Beta</th><th>SE</th><th>Z</th><th>p-value</th><th>Subjects</th></tr>"
+  }
+  html_lines <- c(html_lines, "<table>", table_header)
   for (j in seq_len(nrow(df_cat))) {
     row <- df_cat[j, ]
-    html_lines <- c(html_lines,
+    table_row <- if (single_effect_mode) {
       sprintf("<tr><td>%s</td><td>%.4f</td><td>%s</td><td>%s</td><td>%s</td><td>%d</td></tr>",
               row$roi,
               row$beta,
               ifelse(is.na(row$se), "NA", sprintf("%.4f", row$se)),
               ifelse(is.na(row$z), "NA", sprintf("%.3f", row$z)),
               ifelse(is.na(row$p), "NA", sprintf("%.4g", row$p)),
-              row$n_subjects))
+              row$n_subjects)
+    } else {
+      sprintf("<tr><td>%s</td><td>%s</td><td>%.4f</td><td>%s</td><td>%s</td><td>%s</td><td>%d</td></tr>",
+              row$roi,
+              row$effect,
+              row$beta,
+              ifelse(is.na(row$se), "NA", sprintf("%.4f", row$se)),
+              ifelse(is.na(row$z), "NA", sprintf("%.3f", row$z)),
+              ifelse(is.na(row$p), "NA", sprintf("%.4g", row$p)),
+              row$n_subjects)
+    }
+    html_lines <- c(html_lines, table_row)
   }
   html_lines <- c(html_lines, "</table>")
-  if (cat == "significant") {
+  if (cat == "significant" && single_effect_mode) {
     for (j in seq_len(nrow(df_cat))) {
       row <- df_cat[j, ]
       if (is.na(row$plot) || !nzchar(row$plot)) next

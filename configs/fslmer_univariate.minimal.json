@@ -8,7 +8,7 @@
   "all_regions": true,
   "include_summary": true,
   
-  "formula": "~ factor(tp) * group_5 + age + sex",
+  "formula": "~ factor(tp) * group_beh + age + sex",
   "random_effects": "RIRS",
   
   "add_baseline": true,
