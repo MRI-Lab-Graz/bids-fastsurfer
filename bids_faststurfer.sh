@@ -2,7 +2,7 @@
 
 
 
-# Usage: ./bids_fastsurfer.sh /bids-folder /outputfolder -c fastsurfer_options.json [--dry_run] [--pilot] [--debug]
+# Usage: ./bids_fastsurfer.sh /bids-folder /outputfolder -c fastsurfer_options.json [--dry_run] [--pilot] [--debug] [--nohup] [--batch_size N]
 #
 # Arguments:
 #   /bids-folder           Path to BIDS input directory
@@ -13,16 +13,20 @@
 #   --sub <subject>        (Optional) Process only the specified subject (e.g. sub-001)
 #   --ses <session>        (Optional) Process only the specified session for the subject (e.g. ses-1)
 #   --debug                (Optional) Print debug information about parsed options and paths
+#   --nohup                (Optional) Run each subject in the background, output redirected to log files
+#   --batch_size N         (Optional) Process subjects in batches of N (recommended for large re-runs)
 #
 # Example:
 #   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --pilot --dry_run --debug
-    echo "\nExample:"
-    echo "  $0 ./data ./output -c fastsurfer_options.json --pilot --dry_run --debug"
-    echo "  $0 ./data ./output -c fastsurfer_options.json --sub sub-001 --ses ses-1"
+#   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --sub sub-001 --ses ses-1
+#   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --nohup
+#   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --batch_size 4
 
 # Show help if no arguments are provided
 SUBJECT=""
 SESSION=""
+NOHUP=0
+BATCH_SIZE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -c|--config)
@@ -40,6 +44,14 @@ while [[ $# -gt 0 ]]; do
         --debug)
             DEBUG=1
             shift
+            ;;
+        --nohup)
+            NOHUP=1
+            shift
+            ;;
+        --batch_size)
+            BATCH_SIZE="$2"
+            shift 2
             ;;
         --sub)
             SUBJECT="$2"
@@ -174,6 +186,18 @@ if [[ $PILOT -eq 1 ]]; then
     echo "[PILOT MODE] Only processing: ${T1W_LIST[0]}"
 fi
 
+# Batch mode
+if [[ -n "$BATCH_SIZE" ]]; then
+    echo "[BATCH] Triggering batch_fastsurfer.sh with batch size $BATCH_SIZE"
+    script_dir="$(dirname "$0")"
+    # Write subject list to a temp file
+    tmp_subjects="${OUTPUT_DIR}/batch_subjects.txt"
+    printf '%s\n' "${T1W_LIST[@]}" > "$tmp_subjects"
+    nohup "$script_dir/batch_fastsurfer.sh" "$BATCH_SIZE" "$tmp_subjects" > "$OUTPUT_DIR/batch_processing.log" 2>&1 &
+    echo "Batch processing started in background. Monitor with: tail -f $OUTPUT_DIR/batch_processing.log"
+    exit 0
+fi
+
 for t1w_img in "${T1W_LIST[@]}"; do
     fname=$(basename "$t1w_img")
     subj=$(echo "$fname" | grep -o 'sub-[^_]*')
@@ -192,9 +216,7 @@ for t1w_img in "${T1W_LIST[@]}"; do
     fi
     t2w_img=$(find "$BIDS_DATA" -type f -name "${t2_pattern}_*T2w.nii.gz" | head -n1)
 
-
     # Build options from JSON config
-
     extra_opts=$(parse_json_options_cross "$CONFIG")
     if [[ $DEBUG -eq 1 ]]; then
         echo "DEBUG: Extra options from JSON: $extra_opts"
@@ -242,6 +264,11 @@ for t1w_img in "${T1W_LIST[@]}"; do
     if [[ $DRY_RUN -eq 1 ]]; then
         printf '%q ' "${cmd[@]}"
         echo
+    elif [[ $NOHUP -eq 1 ]]; then
+        log_file="$OUTPUT_DIR/fastsurfer_${sid}.log"
+        echo "Running with nohup, output redirected to: $log_file"
+        nohup "${cmd[@]}" > "$log_file" 2>&1 &
+        echo "Started process PID: $!"
     else
         "${cmd[@]}"
     fi
