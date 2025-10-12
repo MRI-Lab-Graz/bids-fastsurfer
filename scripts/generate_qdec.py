@@ -136,7 +136,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument(
         "--link-long",
         action="store_true",
-        help="Create <fsid>.long.<base> symlinks pointing to the timepoint directories when missing",
+        help="Create <fsid>.long.<base> symlinks pointing to the timepoint directories when missing. "
+        "If not specified, automatically enabled when multiple sessions per subject are detected.",
+    )
+    p.add_argument(
+        "--no-link-long",
+        action="store_true",
+        help="Disable automatic linking even when multiple sessions are detected",
     )
     p.add_argument(
         "--link-dry-run",
@@ -234,6 +240,19 @@ def scan_subjects_dir(subjects_dir: Path) -> List[Tuple[str, str, Optional[str]]
             entries.append((fsid, base, ses))
         # else: base-only directory, skip
     return entries
+
+
+def has_multiple_sessions(timepoints: List[Tuple[str, str, Optional[str]]]) -> bool:
+    """Check if any subject has multiple sessions (timepoints)."""
+    subject_sessions = {}
+    for fsid, base, ses in timepoints:
+        if ses:  # Only count actual sessions
+            if base not in subject_sessions:
+                subject_sessions[base] = []
+            subject_sessions[base].append(ses)
+    
+    # Check if any subject has more than one session
+    return any(len(sessions) > 1 for sessions in subject_sessions.values())
 
 
 def session_to_tp(ses_label: Optional[str]) -> Optional[int]:
@@ -577,19 +596,39 @@ def build_skip_set(args) -> Set[str]:
 
 
 def resolve_output_path(args) -> Path:
-    """Resolve the output path, handling directory inputs."""
+    """Resolve the output path, handling directory inputs intelligently.
+    
+    If the path looks like a file (has extension like .tsv, .dat, .txt), treat as file.
+    If the path looks like a directory (no extension, ends with /, or is existing dir), 
+    create directory and put default file inside it.
+    If path exists as a file but no extension, append .dat extension.
+    """
     out_path = args.output
-    try:
-        if out_path.exists() and out_path.is_dir():
+    
+    # Check if it looks like a file (has extension)
+    path_str = str(out_path)
+    if '.' in path_str and not path_str.endswith('.'):
+        # Has extension, treat as file
+        return out_path
+    
+    # No extension - check if it exists
+    if out_path.exists():
+        if out_path.is_file():
+            # Exists as file, append .dat extension
+            out_path = out_path.with_suffix('.dat')
+            logger.info(f"--output exists as file; writing to: {out_path}")
+            return out_path
+        elif out_path.is_dir():
+            # Exists as directory, add default filename
             out_path = out_path / DEFAULT_OUTPUT_FILENAME
-            logger.info(f"--output points to a directory; writing file to: {out_path}")
-        elif str(out_path).endswith(os.sep):
-            # Trailing slash suggests intent as directory even if it doesn't exist yet
-            out_path = out_path / DEFAULT_OUTPUT_FILENAME
-            logger.info(f"--output looks like a directory; writing file to: {out_path}")
-    except Exception:
-        # If os-level checks fail, proceed and let write_qdec handle parent creation and raise meaningful errors
-        pass
+            logger.info(f"--output is existing directory; writing file to: {out_path}")
+            return out_path
+    
+    # Doesn't exist or looks like directory path
+    # Create directory and put default file inside
+    out_path = out_path / DEFAULT_OUTPUT_FILENAME
+    logger.info(f"--output looks like a directory; writing file to: {out_path}")
+    
     return out_path
 
 
@@ -669,6 +708,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     timepoints = scan_subjects_dir(args.subjects_dir)
     skip_set = build_skip_set(args)
 
+    # Determine if linking should be enabled
+    multiple_sessions = has_multiple_sessions(timepoints)
+    enable_linking = False
+    
+    if args.link_long:
+        # Explicitly requested
+        enable_linking = True
+        logger.info("Longitudinal linking enabled (--link-long specified)")
+    elif args.no_link_long:
+        # Explicitly disabled
+        enable_linking = False
+        if multiple_sessions:
+            logger.warning("Multiple sessions detected but linking disabled (--no-link-long specified)")
+    elif multiple_sessions:
+        # Auto-enable when multiple sessions found
+        enable_linking = True
+        logger.info(f"Multiple sessions detected ({multiple_sessions}), automatically enabling longitudinal linking")
+    else:
+        enable_linking = False
+
     header, rows = build_qdec_rows(
         timepoints,
         participants_rows,
@@ -695,11 +754,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     # Optional FastSurfer .long symlink verification/creation for FreeSurfer tools compatibility
-    if args.verify_long or args.link_long:
+    if args.verify_long or enable_linking:
         verify_and_link_long(
             args.subjects_dir,
             timepoints,
-            link=args.link_long,
+            link=enable_linking,
             dry_run=args.link_dry_run,
             force=args.link_force,
         )

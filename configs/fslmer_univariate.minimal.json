@@ -1,18 +1,19 @@
 {
-  "_comment": "Minimal working configuration for run_fslmer_univariate.sh",
+  "_comment": "Configuration for analyzing ALL brain regions",
   "_usage": "bash scripts/run_fslmer_univariate.sh --config configs/this_file.json",
 
-  "qdec": "results/prep_long/qdec.table.dat",
-  "aseg": "results/prep_long/aseg.long.table",
+  "qdec": "results/test_again/qdec.table.dat",
+  "aseg": "results/test_again/aseg.long.table",
+
+  "all_regions": true,
+  "include_summary": true,
   
-  "roi": "Left.Hippocampus",
-  
-  "formula": "~ factor(tp) * group + age + sex",
+  "formula": "~ factor(tp) * group_5 + age + sex",
   "random_effects": "RIRS",
   
   "add_baseline": true,
   
-  "outdir": "results/hippocampus_analysis",
+  "outdir": "results/all_regions_analysis",
   
   "alpha": 0.05,
   "quiet": false

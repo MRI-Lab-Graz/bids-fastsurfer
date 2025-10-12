@@ -90,7 +90,7 @@ setup_r_environment() {
         echo "Checking R package dependencies..." >&2
         
         if ! $rscript_cmd -e "
-            required_pkgs <- c('optparse', 'jsonlite', 'stats')
+            required_pkgs <- c('optparse', 'jsonlite', 'stats', 'ggplot2')
             missing <- required_pkgs[!sapply(required_pkgs, requireNamespace, quietly=TRUE)]
             if (length(missing) > 0) {
                 cat('Missing required R packages:', paste(missing, collapse=', '), '\n', file=stderr())

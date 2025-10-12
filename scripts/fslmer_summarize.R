@@ -78,17 +78,54 @@ dat$sex <- factor(dat$sex)
 if (!("tp" %in% names(dat))) stop("Merged data lacks 'tp' column")
 dat$tp <- suppressWarnings(as.numeric(dat$tp))
 
+# Check if this is multi-ROI analysis (has lme_coefficients.csv) or single ROI (has fit.rds)
 coef_csv <- file.path(results_dir, "lme_coefficients.csv")
-if (!file.exists(coef_csv)) stop("lme_coefficients.csv not found in results directory")
-coef_df <- read.csv(coef_csv, stringsAsFactors = FALSE)
-if (!("roi" %in% names(coef_df))) stop("lme_coefficients.csv missing 'roi' column")
+fit_rds <- file.path(results_dir, "fit.rds")
+
+if (file.exists(coef_csv)) {
+  # Multi-ROI analysis
+  coef_df <- read.csv(coef_csv, stringsAsFactors = FALSE)
+  if (!("roi" %in% names(coef_df))) stop("lme_coefficients.csv missing 'roi' column")
+  is_multi_roi <- TRUE
+} else if (file.exists(fit_rds)) {
+  # Single ROI analysis - extract ROI from config
+  if (!("roi" %in% names(cfg))) stop("Single ROI analysis but 'roi' not found in config")
+  roi_name <- cfg$roi
+  
+  # Load the fit to extract coefficients
+  fit <- readRDS(fit_rds)
+  
+  # For single ROI, the coefficients are in fit$Bhat with names from colnames(fit$X)
+  coef_names <- colnames(fit$X)
+  if (is.null(coef_names) || length(coef_names) == 0) {
+    stop("Could not extract coefficient names from fit.rds")
+  }
+  
+  # Create a coef_df-like structure for single ROI
+  coef_df <- data.frame(
+    roi = rep(roi_name, length(coef_names)),
+    coef = coef_names,
+    beta = fit$Bhat,
+    stringsAsFactors = FALSE
+  )
+  is_multi_roi <- FALSE
+} else {
+  stop("Neither lme_coefficients.csv nor fit.rds found in results directory")
+}
 
 effect_rows <- subset(coef_df, coef == opt$effect)
-if (!nrow(effect_rows)) stop(sprintf("Effect '%s' not found in lme_coefficients.csv", opt$effect))
+if (!nrow(effect_rows)) stop(sprintf("Effect '%s' not found in results", opt$effect))
 
 roi_to_filename <- function(roi) gsub("[^A-Za-z0-9_-]", "_", roi)
-fit_dir <- file.path(results_dir, "individual_rois")
-if (!dir.exists(fit_dir)) stop("individual_rois directory missing from results")
+
+if (is_multi_roi) {
+  fit_dir <- file.path(results_dir, "individual_rois")
+  if (!dir.exists(fit_dir)) stop("individual_rois directory missing from multi-ROI results")
+  single_roi_fit <- NULL
+} else {
+  fit_dir <- results_dir  # fit.rds is directly in results_dir for single ROI
+  single_roi_fit <- fit  # Reuse the already loaded fit
+}
 
 results <- list()
 messages <- character(0)
@@ -96,14 +133,29 @@ messages <- character(0)
 for (i in seq_len(nrow(effect_rows))) {
   roi <- effect_rows$roi[i]
   beta <- effect_rows$beta[i]
-  fit_path <- file.path(fit_dir, sprintf("%s_fit.rds", roi_to_filename(roi)))
-  if (!file.exists(fit_path)) {
-    messages <- c(messages, sprintf("[WARN] fit file missing for %s", roi))
-    next
+  
+  if (is_multi_roi) {
+    fit_path <- file.path(fit_dir, sprintf("%s_fit.rds", roi_to_filename(roi)))
+    if (!file.exists(fit_path)) {
+      messages <- c(messages, sprintf("[WARN] fit file missing for %s", roi))
+      next
+    }
+    fit <- readRDS(fit_path)
+  } else {
+    fit <- single_roi_fit  # Use the pre-loaded fit
   }
-  fit <- readRDS(fit_path)
-  coef_names <- colnames(fit$X)
-  if (is.null(coef_names) || !(opt$effect %in% coef_names)) {
+  
+  coef_names <- names(fit$Bhat)
+  if (is.null(coef_names) || length(coef_names) == 0) {
+    if (!is.null(fit$X)) {
+      coef_names <- colnames(fit$X)
+    } else {
+      messages <- c(messages, sprintf("[WARN] Could not extract coefficient names for %s", roi))
+      next
+    }
+  }
+  
+  if (!(opt$effect %in% coef_names)) {
     messages <- c(messages, sprintf("[WARN] Effect '%s' not present in design for %s", opt$effect, roi))
     next
   }

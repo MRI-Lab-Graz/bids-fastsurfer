@@ -62,6 +62,9 @@ set -euo pipefail
 #   {outdir}/results_summary.csv:     Summary statistics for all ROIs
 #   {outdir}/models/{roi}_model.txt:  Individual model results per ROI
 #   {outdir}/merged_data.csv:         Combined input data (if --save-merged)
+#   {outdir}/summary_tp_sexM.csv:     Significance summary with categories (sig/trend/non-sig)
+#   {outdir}/summary.html:            HTML report with plots for significant results
+#   {outdir}/plots/:                  Directory containing plots for significant ROIs
 
 # Load shared functions
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -92,8 +95,52 @@ cd "$ROOT_DIR" || show_error "Cannot change to project directory: $ROOT_DIR"
 R_SCRIPT="scripts/fslmer_univariate.R"
 validate_path "$R_SCRIPT" file "R script" || exit 1
 
+# Parse arguments to extract output directory for summarization
+OUTDIR=""
+CONFIG_FILE=""
+ARGS=("$@")
+
+for ((i=0; i<${#ARGS[@]}; i++)); do
+    case ${ARGS[i]} in
+        --outdir)
+            if [[ $((i+1)) -lt ${#ARGS[@]} ]]; then
+                OUTDIR="${ARGS[$((i+1))]}"
+            fi
+            ;;
+        --config)
+            if [[ $((i+1)) -lt ${#ARGS[@]} ]]; then
+                CONFIG_FILE="${ARGS[$((i+1))]}"
+            fi
+            ;;
+    esac
+done
+
+# If config file was used, extract outdir from it
+if [[ -n "$CONFIG_FILE" && -z "$OUTDIR" ]]; then
+    if command -v jq >/dev/null 2>&1; then
+        OUTDIR=$(jq -r '.outdir // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
+    elif command -v python3 >/dev/null 2>&1; then
+        OUTDIR=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('outdir', ''))" 2>/dev/null || echo "")
+    fi
+fi
+
 # Setup R environment and get Rscript command
 RSCRIPT_CMD="$(setup_r_environment "$SCRIPT_DIR")"
 
 echo "Executing R script..." >&2
-exec $RSCRIPT_CMD "$R_SCRIPT" "$@"
+$RSCRIPT_CMD "$R_SCRIPT" "$@"
+
+# Check if analysis completed successfully and run summarization
+if [[ $? -eq 0 ]]; then
+    # Run summarization if we have an output directory
+    if [[ -n "$OUTDIR" && -d "$OUTDIR" ]]; then
+        echo "Generating summary report..." >&2
+        SUMMARIZE_SCRIPT="scripts/fslmer_summarize.R"
+        if [[ -f "$SUMMARIZE_SCRIPT" ]]; then
+            # Use sexM as default effect for single ROI analyses
+            $RSCRIPT_CMD "$SUMMARIZE_SCRIPT" --results-dir "$OUTDIR" --effect "sexM" --verbose
+        else
+            echo "Warning: Summary script not found at $SUMMARIZE_SCRIPT" >&2
+        fi
+    fi
+fi
