@@ -108,6 +108,8 @@ PYTHON_CMD="python3"
 # AUTO default: enabled unless user provides --tid/--tpids
 AUTO=1
 
+BATCH_SIZE=""
+
 ############################################
 # Argument Parsing
 ############################################
@@ -138,6 +140,8 @@ while [[ $# -gt 0 ]]; do
       PILOT=1; shift ;;
     --re-run)
       RERUN_FILE="${2:-}"; shift 2 ;;
+      --batch_size)
+        BATCH_SIZE="${2:-}"; shift 2 ;;
     --nohup)
       NOHUP=1; shift ;;
     --dry_run)
@@ -226,6 +230,15 @@ if [[ -n "${RERUN_FILE}" ]]; then
     exit 1
   fi
   AUTO=2  # Special mode for re-run
+
+  # If batch_size is set, trigger batch_fastsurfer.sh and exit
+  if [[ -n "$BATCH_SIZE" ]]; then
+    echo "[BATCH] Triggering batch_fastsurfer.sh with batch size $BATCH_SIZE"
+    script_dir="$(dirname "$0")"
+    nohup "$script_dir/batch_fastsurfer.sh" "$BATCH_SIZE" "$RERUN_FILE" > "$OUTPUT_DIR/batch_processing.log" 2>&1 &
+    echo "Batch processing started in background. Monitor with: tail -f $OUTPUT_DIR/batch_processing.log"
+    exit 0
+  fi
 fi
 
 ############################################

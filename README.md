@@ -25,45 +25,59 @@ Quick checks:
 singularity --version
 
 # should print a path after install
-jq --version
+
+## Usage
+
+See `bids_long_fastsurfer.sh` for full help and options.
+
+### Example: Manual subject specification
+
+```bash
+bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
+	-c fastsurfer_options.json --tid sub-001 \
+	--tpids sub-001_ses-01 sub-001_ses-02 --dry_run --debug
 ```
 
-## Repository layout
+### Example: Automatic detection
 
-- `bids_faststurfer.sh` — Cross-sectional wrapper
-- `bids_long_fastsurfer.sh` — Longitudinal wrapper
-- `fastsurfer_options.json` — Example configuration file with cross/long sections
-- `license.txt` — Placeholder filename referenced by scripts (replace with your actual FreeSurfer license file path in the config)
-- `scripts/install.sh` — One-command installer for the R analysis environment (micromamba)
-- `scripts/generate_qdec.py` — Build Qdec from BIDS participants.tsv and subjects_dir; optional .long symlink helper
-- `scripts/fslmer_univariate.R` — Flexible univariate LME/GAM/GLM helper (fslmer/mgcv/stats)
-- `configs/fslmer_univariate.example.json` — Example JSON config for the R script
-
-## Example BIDS datasets
-
-If you need public BIDS datasets to try the wrappers, you can use these OpenNeuro examples (or any other BIDS-compatible dataset):
-
-- Longitudinal: ds004937 v1.0.1 — <https://openneuro.org/datasets/ds004937/versions/1.0.1>
-- Cross-sectional: ds004965 v1.0.1 — <https://openneuro.org/datasets/ds004965/versions/1.0.1>
-
-Download using your preferred tool (OpenNeuro CLI, openneuro-py, DataLad, or web download) and point `<BIDS_ROOT>` to the dataset root.
-
-### Download examples
-
-You can download these datasets with either the OpenNeuro CLI or the Python package `openneuro-py`.
-
-- OpenNeuro CLI (requires Node.js):
-
-```zsh
-# Install once (optional)
-npm install -g @openneuro/cli
-
-# Longitudinal dataset (ds004937 v1.0.1)
-openneuro download --snapshot 1.0.1 --dataset ds004937 --destination /path/to/BIDS-ds004937
-
-# Cross-sectional dataset (ds004965 v1.0.1)
-openneuro download --snapshot 1.0.1 --dataset ds004965 --destination /path/to/BIDS-ds004965
+```bash
+bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
+	-c fastsurfer_options.json --dry_run
 ```
+
+### Example: Pilot (one random subject)
+
+```bash
+bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
+	-c fastsurfer_options.json --pilot --dry_run
+```
+
+### Example: Re-run specific subjects from JSON file
+
+```bash
+bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
+	-c fastsurfer_options.json --re-run missing_subjects.json --dry_run
+```
+
+### Example: Re-run with nohup for long-running jobs
+
+```bash
+bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
+	-c fastsurfer_options.json --re-run missing_subjects.json --nohup
+```
+
+### Example: Batch mode (recommended for large re-runs)
+
+```bash
+bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
+	-c fastsurfer_options.json --re-run missing_subjects.json --batch_size 4
+```
+
+### Notes
+- `--nohup` runs each subject in the background with output redirected to log files.
+- `--batch_size N` triggers batch processing, running up to N subjects in parallel per batch (using `batch_fastsurfer.sh`).
+- Monitor batch progress with: `tail -f <OUTPUT_DIR>/batch_processing.log`
+- Monitor individual subject logs with: `tail -f <OUTPUT_DIR>/long_fastsurfer_<subject>.log`
 
 - Python: openneuro-py (<https://pypi.org/project/openneuro-py/>)
 
