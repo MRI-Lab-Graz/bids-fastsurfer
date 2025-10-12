@@ -1,0 +1,13 @@
+{
+  "_comment": "Minimal working configuration for run_meta_pipeline.sh",
+  "_usage": "bash scripts/run_meta_pipeline.sh --config configs/this_file.json",
+
+  "subjects_dir": "/path/to/derivatives/fastsurfer",
+  "participants": "configs/participants.tsv",
+  
+  "out_root": "results/my_study",
+  
+  "models": ["group5_factor_time"],
+  
+  "link_long": true
+}

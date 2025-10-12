@@ -1,0 +1,19 @@
+{
+  "_comment": "Minimal working configuration for run_fslmer_univariate.sh",
+  "_usage": "bash scripts/run_fslmer_univariate.sh --config configs/this_file.json",
+
+  "qdec": "results/prep_long/qdec.table.dat",
+  "aseg": "results/prep_long/aseg.long.table",
+  
+  "roi": "Left.Hippocampus",
+  
+  "formula": "~ factor(tp) * group + age + sex",
+  "random_effects": "RIRS",
+  
+  "add_baseline": true,
+  
+  "outdir": "results/hippocampus_analysis",
+  
+  "alpha": 0.05,
+  "quiet": false
+}

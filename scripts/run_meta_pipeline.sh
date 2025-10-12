@@ -19,11 +19,17 @@ set -euo pipefail
 #     --link-long
 #
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Load shared functions
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1090
+source "$SCRIPT_DIR/common_functions.sh"
+
+ROOT_DIR="$(get_project_root "$SCRIPT_DIR")"
 cd "$ROOT_DIR"
 
-PY=python
-command -v "$PY" >/dev/null 2>&1 || PY=python3
+# Get Python command
+PY="$(get_python_cmd)"
+export PYTHON_CMD="$PY"
 
 PARTICIPANTS="configs/participants.tsv"
 SUBJECTS_DIR=""
@@ -129,17 +135,7 @@ Validation of effects:
 EOF
 }
 
-maybe_run() {
-  if [[ $DRY_RUN -eq 1 ]]; then
-    # Print the command as it would be executed
-    printf 'DRY-RUN: '
-    printf '%q ' "$@"
-    printf '\n'
-    return 0
-  else
-    "$@"
-  fi
-}
+# maybe_run is now loaded from common_functions.sh
 
 print_input_summary() {
   echo "[0/4] Input summary" >&2
@@ -165,10 +161,10 @@ print_input_summary() {
 
 validate_inputs() {
   local ok=1
-  [[ -d "$SUBJECTS_DIR" ]] || { echo "ERROR: subjects_dir not found: $SUBJECTS_DIR" >&2; ok=0; }
-  [[ -f "$PARTICIPANTS" ]] || { echo "ERROR: participants.tsv not found: $PARTICIPANTS" >&2; ok=0; }
-  if [[ -n "$BIDS_ROOT" && ! -d "$BIDS_ROOT" ]]; then
-    echo "ERROR: bids_root not found: $BIDS_ROOT" >&2; ok=0
+  validate_path "$SUBJECTS_DIR" dir "subjects_dir" || ok=0
+  validate_path "$PARTICIPANTS" file "participants.tsv" || ok=0
+  if [[ -n "$BIDS_ROOT" ]]; then
+    validate_path "$BIDS_ROOT" dir "bids_root" || ok=0
   fi
 
   # Validate model configs exist
@@ -194,7 +190,7 @@ validate_inputs() {
 
   # If aseg is requested, check tool availability
   if [[ $DO_ASEG -eq 1 && $DRY_RUN -eq 0 ]]; then
-    if ! command -v asegstats2table >/dev/null 2>&1 && [[ ! -x "/usr/local/freesurfer/bin/asegstats2table" ]]; then
+    if ! check_freesurfer_tools "asegstats2table"; then
       echo "ERROR: asegstats2table not found in PATH. Source FreeSurfer or use --skip-aseg" >&2
       ok=0
     fi
@@ -206,48 +202,11 @@ validate_inputs() {
   fi
 }
 
-json_get() {
-  local file="$1" key="$2"; shift 2 || true
-  "$PY" - "$file" "$key" <<'PY'
-import json,sys
-fn,key=sys.argv[1],sys.argv[2]
-with open(fn) as f: d=json.load(f)
-cur=d
-for part in key.split('.'):
-    if isinstance(cur, dict) and part in cur:
-        cur=cur[part]
-    else:
-        cur=None; break
-if cur is None:
-    print("")
-elif isinstance(cur, bool):
-    print("true" if cur else "false")
-else:
-    print(cur)
-PY
-}
-
-json_get_array() {
-  local file="$1" key="$2"; shift 2 || true
-  "$PY" - "$file" "$key" <<'PY'
-import json,sys
-fn,key=sys.argv[1],sys.argv[2]
-with open(fn) as f: d=json.load(f)
-cur=d
-for part in key.split('.'):
-    if isinstance(cur, dict) and part in cur:
-        cur=cur[part]
-    else:
-        cur=None; break
-if isinstance(cur, list):
-    for v in cur:
-        print(v)
-PY
-}
+# json_get and json_get_array are now loaded from common_functions.sh
 
 load_config() {
   local f="$1"
-  [[ -f "$f" ]] || { echo "Config not found: $f" >&2; exit 2; }
+  validate_path "$f" file "Config" || exit 2
   local v
   v=$(json_get "$f" subjects_dir);      [[ -n "$v" ]] && SUBJECTS_DIR="$v"
   v=$(json_get "$f" participants);      [[ -n "$v" ]] && PARTICIPANTS="$v"
@@ -354,79 +313,7 @@ PY
   fi
 }
 
-# Convert human-friendly effect tokens to internal effect terms
-human_to_effect() {
-  local e="$1"
-  # Lowercase copy for matching but preserve original for other cases
-  local el="${e,,}"
-  # Interaction?
-  if [[ "$el" == *:* ]]; then
-    local lhs="${el%%:*}" rhs="${el#*:}"
-    lhs="$(human_to_effect "$lhs")"
-    # Map group tokens on RHS
-    case "$rhs" in
-      smallgroup_2w|smallgroup-2w) rhs="group_5smallgroup_2w" ;;
-      smallgroup_4w|smallgroup-4w) rhs="group_5smallgroup_4w" ;;
-      alone_4w|alone-4w)           rhs="group_5alone_4w" ;;
-      control)                     rhs="group_5control" ;;
-      *)                           rhs="$(human_to_effect "$rhs")" ;;
-    esac
-    echo "${lhs}:${rhs}"
-    return 0
-  fi
-  case "$el" in
-    tp2|time2|t2) echo "factor(tp)2" ;;
-    tp3|time3|t3) echo "factor(tp)3" ;;
-    sex|gender)   echo "sexM" ;;
-    age)          echo "age" ;;
-    *)            echo "$e" ;;
-  esac
-}
-
-# Check if an effect term exists in lme_coefficients.csv
-effect_exists() {
-  local res_dir="$1" eff="$2"
-  "$PY" - "$res_dir" "$eff" <<'PY'
-import sys,os,csv
-res_dir,eff=sys.argv[1],sys.argv[2]
-fp=os.path.join(res_dir,'lme_coefficients.csv')
-if not os.path.isfile(fp):
-    sys.exit(2)
-with open(fp,newline='') as f:
-    r=csv.DictReader(f)
-    for row in r:
-        if row.get('coef')==eff:
-            sys.exit(0)
-sys.exit(1)
-PY
-  case $? in
-    0) return 0;;
-    1) return 1;;
-    2) echo "WARN: coefficients file not found: $res_dir/lme_coefficients.csv" >&2; return 1;;
-  esac
-}
-
-# List available time effect levels from lme_coefficients.csv
-list_time_effects() {
-  local res_dir="$1"
-  "$PY" - "$res_dir" <<'PY'
-import sys,os,csv,re
-res_dir=sys.argv[1]
-fp=os.path.join(res_dir,'lme_coefficients.csv')
-levels=set()
-if os.path.isfile(fp):
-    with open(fp,newline='') as f:
-        for row in csv.DictReader(f):
-            c=row.get('coef','')
-            m=re.match(r'^factor\(tp\)(\d+)', c)
-            if m:
-                levels.add(int(m.group(1)))
-if levels:
-    print(', '.join(f'tp{n}' for n in sorted(levels)))
-else:
-    print('(none)')
-PY
-}
+# human_to_effect, effect_exists, list_time_effects are now loaded from common_functions.sh
 
 # Read effects for a given tag from meta CONFIG_JSON, supporting strings and simple objects
 get_effects_for_tag() {

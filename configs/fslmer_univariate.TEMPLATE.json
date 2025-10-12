@@ -1,0 +1,123 @@
+{
+  "_comment_purpose": "Comprehensive configuration template for run_fslmer_univariate.sh",
+  "_comment_usage": "bash scripts/run_fslmer_univariate.sh --config configs/your_config.json",
+  "_comment_docs": "See docs/common_functions_reference.md for detailed documentation",
+
+  "_section": "REQUIRED INPUTS",
+  "qdec": "results/prep_long/qdec.table.dat",
+  "_comment_qdec": "Path to QDEC table (TSV) with subject metadata: fsid, fsid_base, tp, group, covariates, etc.",
+  
+  "aseg": "results/prep_long/aseg.long.table",
+  "_comment_aseg": "Path to FreeSurfer longitudinal volume table (asegstats2table output with .long. identifiers)",
+
+  "_section_roi": "ROI SELECTION (choose ONE of: roi, region_pattern, or all_regions)",
+  "roi": "Left.Hippocampus",
+  "_comment_roi": "Single ROI column name for focused analysis. Use 'Measure.volume' for total brain volume.",
+  "_comment_roi_examples": "Examples: 'Left.Hippocampus', 'Right.Amygdala', 'Brain.Stem', 'EstimatedTotalIntraCranialVol'",
+  
+  "region_pattern": null,
+  "_comment_region_pattern": "Regex pattern to match multiple ROI names. Example: 'Hippocampus|Amygdala' for limbic regions",
+  "_comment_region_pattern_examples": "'^Left\\.' (all left), 'Ventricle' (all ventricles), 'Hippocampus|Amygdala' (limbic)",
+  
+  "all_regions": false,
+  "_comment_all_regions": "Set to true to analyze ALL brain regions. Excludes summary measures by default.",
+  
+  "include_summary": false,
+  "_comment_include_summary": "Include global summary measures (e.g., eTIV) when using all_regions or region_pattern",
+
+  "_section_model": "STATISTICAL MODEL CONFIGURATION",
+  "formula": "~ tp * group + age + sex",
+  "_comment_formula": "R formula for fixed effects. Use factor(tp) to treat time as categorical.",
+  "_comment_formula_examples": [
+    "~ tp                           # Simple time effect (continuous)",
+    "~ factor(tp)                   # Time as categorical (tp1, tp2, tp3)",
+    "~ tp * group                   # Time-by-group interaction",
+    "~ factor(tp) * group_5 + age + sex  # Full model with covariates",
+    "~ tp + I(tp^2)                 # Quadratic time trend",
+    "~ s(tp)                        # GAM smooth (requires --engine gam)"
+  ],
+  
+  "random_effects": "RIRS",
+  "_comment_random_effects": "Random effects structure: 'RI' (intercept only), 'RS' (slope only), 'RIRS' (both), or indices '1,2'",
+  "_comment_random_effects_details": "RI = random intercept per subject, RS = random slope for time, RIRS = both (most flexible)",
+  
+  "zcols": null,
+  "_comment_zcols": "[DEPRECATED] Use random_effects instead. Legacy format: [1,2] or '1,2' for random intercept and slope",
+
+  "_section_advanced": "ADVANCED MODEL OPTIONS",
+  "engine": "fslmer",
+  "_comment_engine": "Statistical engine: 'fslmer' (default, recommended), 'glm' (basic GLM), or 'gam' (generalized additive models)",
+  
+  "family": "gaussian",
+  "_comment_family": "GLM/GAM distribution family: 'gaussian', 'binomial', 'poisson', 'Gamma'. Ignored for fslmer.",
+  
+  "add_baseline": true,
+  "_comment_add_baseline": "Add per-ROI baseline covariate (value at first visit) to control for individual differences",
+  
+  "derive_group5": false,
+  "_comment_derive_group5": "Auto-derive intervention variables from group_5: interv, smallgroup, weeks4, weeks",
+  
+  "gam_k": null,
+  "_comment_gam_k": "GAM basis dimension k for smooth terms s(time). Default: auto (min of 5 or unique timepoints)",
+  
+  "no_gam_re": false,
+  "_comment_no_gam_re": "Disable random intercept s(fsid_base, bs='re') in GAM models (use with caution)",
+
+  "contrast": null,
+  "_comment_contrast": "Contrast vector for hypothesis testing. Must match length of model coefficients.",
+  "_comment_contrast_example": "[0, 0, 0, 1, 0] tests 4th coefficient. Usually leave null for main effects.",
+
+  "_section_output": "INPUT/OUTPUT OPTIONS",
+  "outdir": "results/my_analysis",
+  "_comment_outdir": "Output directory for results. Will be created if it doesn't exist.",
+  
+  "model_id": null,
+  "_comment_model_id": "Optional identifier for this model (useful for meta-pipelines). Auto-generated if not provided.",
+  
+  "save_merged": false,
+  "_comment_save_merged": "Save merged input data (QDEC + aseg) as CSV for inspection/debugging",
+  
+  "time_col": "tp",
+  "_comment_time_col": "Name of time variable column in QDEC table. Default: 'tp' (auto-detected)",
+  
+  "id_col": "Measure.volume",
+  "_comment_id_col": "ID column in aseg table for joining. Default: 'Measure.volume' (FreeSurfer standard)",
+
+  "_section_utility": "UTILITY AND DEBUGGING OPTIONS",
+  "print_cols": false,
+  "_comment_print_cols": "Print available column names and data preview, then exit (useful for exploration)",
+  
+  "quiet": false,
+  "_comment_quiet": "Reduce output verbosity (less progress messages)",
+  
+  "debug": false,
+  "_comment_debug": "Enable detailed optimizer logs (fslmer only) for troubleshooting convergence issues",
+
+  "_section_stats": "STATISTICAL SUMMARY OPTIONS",
+  "alpha": 0.05,
+  "_comment_alpha": "Significance threshold (p < alpha). Results below this are 'significant'.",
+  
+  "trend": 0.1,
+  "_comment_trend": "Trend threshold (alpha <= p < trend). Results in this range are 'trends'.",
+  
+  "plot_results": false,
+  "_comment_plot_results": "Generate plots for significant and trend results (experimental feature)",
+  
+  "no_summary": false,
+  "_comment_no_summary": "Skip statistical significance summary in terminal output",
+
+  "_section_examples": "USAGE EXAMPLES",
+  "_example_1": "Single hippocampus analysis: Set roi='Left.Hippocampus', formula='~ tp*group'",
+  "_example_2": "All limbic regions: Set region_pattern='Hippocampus|Amygdala', formula='~ factor(tp)*group_5 + age + sex'",
+  "_example_3": "Full brain, time only: Set all_regions=true, formula='~ tp', random_effects='RI'",
+  "_example_4": "GAM smooth time: Set engine='gam', formula='~ s(tp) + group', gam_k=4",
+  "_example_5": "With baseline correction: Set add_baseline=true, formula='~ baseline_value + tp*group'",
+
+  "_section_notes": "IMPORTANT NOTES",
+  "_note_1": "CLI arguments override JSON config values",
+  "_note_2": "ROI names must match column names in aseg table exactly (case-sensitive, dots not underscores)",
+  "_note_3": "For factor analysis, use factor(tp) in formula, not just tp",
+  "_note_4": "Random effects RIRS (both intercept and slope) are recommended for longitudinal data",
+  "_note_5": "Add baseline_value to formula when add_baseline=true to control for individual baseline differences",
+  "_note_6": "Multi-region analysis runs models in parallel when possible"
+}

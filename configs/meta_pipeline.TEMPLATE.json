@@ -1,0 +1,251 @@
+{
+  "_comment_purpose": "Comprehensive configuration template for run_meta_pipeline.sh",
+  "_comment_usage": "bash scripts/run_meta_pipeline.sh --config configs/your_meta_config.json",
+  "_comment_docs": "See REFACTORING_SUMMARY.md for pipeline overview and workflow details",
+
+  "_section": "REQUIRED INPUTS",
+  "subjects_dir": "/path/to/derivatives/fastsurfer",
+  "_comment_subjects_dir": "FastSurfer/FreeSurfer SUBJECTS_DIR with longitudinal data (sub-*/sub_*_ses-* directories)",
+  
+  "participants": "configs/participants.tsv",
+  "_comment_participants": "TSV file with participant metadata: participant_id, session, group, age, sex, etc.",
+
+  "_section_optional_paths": "OPTIONAL INPUT PATHS",
+  "bids_root": "/path/to/BIDS",
+  "_comment_bids_root": "Optional: BIDS root directory for cross-validation of subjects/sessions",
+
+  "_section_output": "OUTPUT CONFIGURATION",
+  "out_root": "results/my_analysis",
+  "_comment_out_root": "Root directory for all outputs (QDEC, aseg, model results, summaries)",
+  
+  "_section_qdec_aseg": "GENERATED INTERMEDIATE FILES (auto-set, can override)",
+  "qdec": null,
+  "_comment_qdec": "Path to generated QDEC table. Default: {out_root}/qdec.table.dat",
+  
+  "aseg": null,
+  "_comment_aseg": "Path to generated aseg table. Default: {out_root}/aseg.long.table",
+
+  "_section_models": "MODEL SPECIFICATION (choose ONE format)",
+  "_comment_models_format": "Format 1: List of model keys/paths OR Format 2: Inline model definitions (see below)",
+  
+  "models": ["group5_factor_time", "group5_decomposed"],
+  "_comment_models_list": "List of model identifiers or paths to model config JSON files",
+  "_comment_models_known": "Known model keys: 'group5_factor_time', 'group5_decomposed', 'group_beh', or 'all'",
+  "_comment_models_custom": "You can also specify paths: ['configs/my_custom_model.json']",
+
+  "_section_models_inline": "ALTERNATIVE: INLINE MODEL DEFINITIONS",
+  "_comment_inline_format": "Instead of model keys, define models inline as array of objects:",
+  "_models_inline_example": [
+    {
+      "id": "time_only_model",
+      "formula": "~ factor(tp)",
+      "zcols": "RI",
+      "outdir": null,
+      "_comment": "outdir defaults to {out_root}/fslmer_{id}"
+    },
+    {
+      "id": "full_model",
+      "formula": "~ factor(tp) * group_5 + age + sex + EstimatedTotalIntraCranialVol",
+      "zcols": "RIRS",
+      "add_baseline": true,
+      "alpha": 0.05
+    }
+  ],
+  "_comment_inline_note": "Replace 'models' array above with this format for inline definitions",
+
+  "_section_model_map": "MODEL CONFIGURATION OVERRIDES",
+  "model_map": {
+    "group5_factor_time": "configs/fslmer_group5_factor_time.json",
+    "group5_decomposed": "configs/fslmer_group5_decomposed.json"
+  },
+  "_comment_model_map": "Override default config file paths for known model keys",
+
+  "_section_long_setup": "LONGITUDINAL DATA SETUP",
+  "link_long": false,
+  "_comment_link_long": "Create .long symlinks when missing. If false, only verifies existing links.",
+  "_comment_link_note": "FreeSurfer requires .long structure for longitudinal analysis",
+
+  "_section_processing": "PROCESSING OPTIONS",
+  "skip_aseg": false,
+  "_comment_skip_aseg": "Skip asegstats2table generation (requires FreeSurfer if false). Use if aseg already exists.",
+  
+  "no_summaries": false,
+  "_comment_no_summaries": "Skip effect summarization and report generation (run models only)",
+  
+  "qc": false,
+  "_comment_qc": "Run QC checks: flag outliers in ROI vs eTIV at baseline, generate diagnostic plots",
+
+  "_section_subject_filter": "SUBJECT FILTERING",
+  "skip_sub": [],
+  "_comment_skip_sub": "List of participant IDs (fsid_base) to exclude from analysis",
+  "_comment_skip_sub_example": ["sub-0001", "sub-0042", "sub-0099"],
+  
+  "skip_file": null,
+  "_comment_skip_file": "Path to file with participant IDs to skip (one fsid_base per line)",
+
+  "_section_effects": "EFFECT SUMMARIZATION CONFIGURATION",
+  "_comment_effects_purpose": "Specify which effects to summarize for each model",
+  "effects": {
+    "group5_factor_time": [
+      "group_5alone_4w",
+      "group_5smallgroup_2w", 
+      "group_5smallgroup_4w",
+      "group_5control",
+      "factor(tp)2",
+      "factor(tp)3",
+      "factor(tp)2:group_5alone_4w",
+      "factor(tp)3:group_5alone_4w",
+      "factor(tp)2:group_5smallgroup_2w",
+      "factor(tp)3:group_5smallgroup_2w",
+      "factor(tp)2:group_5smallgroup_4w",
+      "factor(tp)3:group_5smallgroup_4w",
+      "factor(tp)2:group_5control",
+      "factor(tp)3:group_5control",
+      "sexM",
+      "age"
+    ],
+    "group5_decomposed": [
+      "factor(tp)2",
+      "factor(tp)3",
+      "smallgroup",
+      "weeks4",
+      "sexM",
+      "age",
+      "factor(tp)2:smallgroup",
+      "factor(tp)3:smallgroup",
+      "factor(tp)2:weeks4",
+      "factor(tp)3:weeks4"
+    ]
+  },
+  "_comment_effects_note": "Can use human-friendly names: 'tp2', 'tp3', 'sex', 'age', 'tp2:smallgroup_2w'",
+
+  "_section_effects_structured": "ALTERNATIVE: STRUCTURED EFFECT DEFINITIONS",
+  "_effects_structured_example": {
+    "my_model": [
+      {"tp": 2},
+      {"tp": 3},
+      {"sex": true},
+      {"age": true},
+      {"tp": 2, "group_5": "smallgroup_2w"},
+      {"tp": 3, "group_5": "alone_4w"}
+    ]
+  },
+  "_comment_structured_note": "These will be converted to proper effect terms automatically",
+
+  "_section_shared_params": "SHARED MODEL PARAMETERS (for inline models)",
+  "time_col": "tp",
+  "_comment_time_col": "Name of time variable in QDEC table",
+  
+  "id_col": "Measure.volume",
+  "_comment_id_col": "ID column in aseg table for joining",
+  
+  "add_baseline": false,
+  "_comment_add_baseline": "Add baseline covariate to all models (can override per model)",
+  
+  "derive_group5": false,
+  "_comment_derive_group5": "Derive intervention variables from group_5 for all models",
+
+  "_section_examples": "CONFIGURATION EXAMPLES",
+  
+  "_example_1_title": "Example 1: Simple time-only analysis",
+  "_example_1": {
+    "subjects_dir": "/data/fastsurfer",
+    "participants": "configs/participants.tsv",
+    "out_root": "results/time_effect",
+    "models": ["configs/time_only.json"],
+    "link_long": true
+  },
+
+  "_example_2_title": "Example 2: Multiple predefined models",
+  "_example_2": {
+    "subjects_dir": "/data/fastsurfer",
+    "participants": "configs/participants.tsv",
+    "out_root": "results/intervention_study",
+    "models": ["group5_factor_time", "group5_decomposed"],
+    "link_long": true,
+    "qc": true,
+    "skip_sub": ["sub-0001"],
+    "effects": {
+      "group5_factor_time": ["tp2", "tp3", "sex", "age"]
+    }
+  },
+
+  "_example_3_title": "Example 3: Inline model definitions",
+  "_example_3": {
+    "subjects_dir": "/data/fastsurfer",
+    "participants": "configs/participants.tsv",
+    "out_root": "results/quick_analysis",
+    "time_col": "tp",
+    "id_col": "Measure.volume",
+    "models": [
+      {
+        "id": "simple",
+        "formula": "~ factor(tp)",
+        "zcols": "RI"
+      },
+      {
+        "id": "with_covariates",
+        "formula": "~ factor(tp) + age + sex",
+        "zcols": "RIRS"
+      }
+    ],
+    "link_long": true
+  },
+
+  "_example_4_title": "Example 4: QC with subject exclusions",
+  "_example_4": {
+    "subjects_dir": "/data/fastsurfer",
+    "participants": "configs/participants.tsv",
+    "out_root": "results/cleaned_data",
+    "models": ["group5_factor_time"],
+    "qc": true,
+    "skip_file": "configs/outliers_to_exclude.txt",
+    "link_long": true
+  },
+
+  "_section_workflow": "PIPELINE WORKFLOW (4 stages)",
+  "_stage_0": "Stage 0: Input validation and summary",
+  "_stage_1": "Stage 1: Generate QDEC and aseg tables from participants.tsv and SUBJECTS_DIR",
+  "_stage_1b": "Stage 1b (optional): Run QC outlier detection if qc=true",
+  "_stage_2": "Stage 2: Run specified models via run_fslmer_univariate.sh",
+  "_stage_3": "Stage 3: Summarize key effects and generate reports (CSV/HTML)",
+  "_stage_4": "Stage 4: Display output locations and completion summary",
+
+  "_section_outputs": "OUTPUT FILES STRUCTURE",
+  "_output_structure": {
+    "{out_root}/": "Root output directory",
+    "  qdec.table.dat": "Generated QDEC metadata table",
+    "  aseg.long.table": "Generated FreeSurfer volume table",
+    "  qc/": "QC plots and outlier reports (if qc=true)",
+    "  fslmer_{model_id}/": "Model-specific results directory",
+    "    lme_coefficients.csv": "Model coefficients for all ROIs",
+    "    results_summary.csv": "Statistical summary",
+    "    individual_rois/": "Per-ROI model fits (.rds files)",
+    "    summaries/": "Effect-specific summaries and plots",
+    "      {effect}_summary.csv": "Summary for specific effect",
+    "      {effect}_report.html": "Interactive HTML report"
+  },
+
+  "_section_notes": "IMPORTANT NOTES",
+  "_note_1": "CLI arguments always override JSON config values",
+  "_note_2": "Pipeline creates output directories automatically",
+  "_note_3": "Effect names are validated against model coefficients before summarization",
+  "_note_4": "Use --dry-run flag to preview actions without executing",
+  "_note_5": "Models run sequentially; errors in one model don't stop others",
+  "_note_6": "Human-friendly effect names (tp2, sex) are auto-converted to R terms",
+  "_note_7": "QC step only checks baseline timepoint for outliers vs eTIV",
+
+  "_section_troubleshooting": "COMMON ISSUES",
+  "_issue_1": "asegstats2table not found: Source FreeSurfer or use skip_aseg=true",
+  "_issue_2": "Effect not found in coefficients: Check factor() wrapping and coefficient names",
+  "_issue_3": ".long directories missing: Use link_long=true to create symlinks",
+  "_issue_4": "Python not found: Ensure Python 3 is installed and in PATH",
+  "_issue_5": "R packages missing: Run scripts/install.sh to set up environment",
+
+  "_section_advanced": "ADVANCED USAGE",
+  "_advanced_1": "Dry run: bash scripts/run_meta_pipeline.sh --config config.json --dry-run",
+  "_advanced_2": "Override output: bash scripts/run_meta_pipeline.sh --config config.json --out-root new_results",
+  "_advanced_3": "Skip existing QDEC: Set skip_aseg=true and provide existing qdec/aseg paths",
+  "_advanced_4": "Custom effect lists: Override built-in effects via 'effects' config section",
+  "_advanced_5": "Model debugging: Check {outdir}/used_config.json for effective configuration"
+}
