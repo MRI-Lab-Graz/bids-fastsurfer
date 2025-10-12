@@ -5,6 +5,8 @@ license.txt
 tmp*/*
 tmp*
 test*/
+batch*json
+test*.json
 results/
 test*/
 fslmer_out/

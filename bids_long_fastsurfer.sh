@@ -10,6 +10,7 @@ Usage:
   bash bids_long_fastsurfer.sh <BIDS_ROOT> <OUTPUT_DIR> -c <config.json> [OPTIONS]
     (Default: auto-detect all longitudinal subjects with >=2 sessions)
   bash bids_long_fastsurfer.sh <BIDS_ROOT> <OUTPUT_DIR> -c <config.json> --tid <subject> --tpids <sub-XX_ses-YY> [<sub-XX_ses-ZZ> ...] [OPTIONS]
+  bash bids_long_fastsurfer.sh <BIDS_ROOT> <OUTPUT_DIR> -c <config.json> --re-run <subjects.json> [OPTIONS]
 
 Required:
   BIDS_ROOT            Path to BIDS dataset root (must contain sub-*/).
@@ -21,6 +22,8 @@ Required:
 
 Optional:
   --pilot              (Auto mode) Randomly select one eligible longitudinal subject (>=2 sessions) and process only that subject.
+  --re-run FILE        JSON file with subjects to re-run. Format: {"subjects": ["sub-001", "sub-002", ...]}
+  --nohup              Run commands with nohup for long-running jobs (redirects output to log files)
   --dry_run            Print the Singularity command only.
   --debug              Verbose internal debug output.
 
@@ -35,7 +38,8 @@ Behavior:
        OUTPUT_DIR -> /output
        license parent dir -> /fs_license
   - License passed as: --fs_license /fs_license/license.txt
-  - Skips subjects that are already fully processed (all timepoint directories exist in OUTPUT_DIR)
+  - Skips subjects that are already fully processed (all timepoint directories exist in OUTPUT_DIR AND have longitudinal aseg.stats)
+  - With --nohup: runs commands in background with output redirected to log files
 
 JSON Structure Example:
 {
@@ -50,6 +54,11 @@ JSON Structure Example:
     "surf_only": false,
     "3T": true
   }
+}
+
+Re-run JSON Structure Example:
+{
+  "subjects": ["sub-1291056", "sub-1292036", "sub-1292037"]
 }
 
 Notes:
@@ -71,6 +80,14 @@ Examples:
   bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
     -c fastsurfer_options.json --pilot --dry_run
 
+  # Re-run specific subjects from JSON file
+  bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
+    -c fastsurfer_options.json --re-run missing_subjects.json --dry_run
+
+  # Re-run with nohup for long-running jobs
+  bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
+    -c fastsurfer_options.json --re-run missing_subjects.json --nohup
+
 EOF
 }
 
@@ -85,6 +102,8 @@ declare -a TPIDS=()
 DRY_RUN=0
 DEBUG=0
 PILOT=0
+RERUN_FILE=""
+NOHUP=0
 PYTHON_CMD="python3"
 # AUTO default: enabled unless user provides --tid/--tpids
 AUTO=1
@@ -117,6 +136,10 @@ while [[ $# -gt 0 ]]; do
       AUTO=1; shift ;;
     --pilot)
       PILOT=1; shift ;;
+    --re-run)
+      RERUN_FILE="${2:-}"; shift 2 ;;
+    --nohup)
+      NOHUP=1; shift ;;
     --dry_run)
       DRY_RUN=1; shift ;;
     --debug)
@@ -190,6 +213,19 @@ fi
 if [[ $PILOT -eq 1 && $AUTO -eq 0 ]]; then
   echo "Error: --pilot can only be used in auto mode (omit --tid/--tpids)." >&2
   exit 1
+fi
+
+# --re-run validation
+if [[ -n "${RERUN_FILE}" ]]; then
+  if [[ ! -f "${RERUN_FILE}" ]]; then
+    echo "Error: Re-run file '${RERUN_FILE}' does not exist." >&2
+    exit 1
+  fi
+  if [[ $AUTO -eq 0 ]]; then
+    echo "Error: --re-run can only be used in auto mode (omit --tid/--tpids)." >&2
+    exit 1
+  fi
+  AUTO=2  # Special mode for re-run
 fi
 
 ############################################
@@ -271,11 +307,13 @@ if [[ $AUTO -eq 0 ]]; then
       echo "[DEBUG] TPID=${tpid}"; echo "[DEBUG] Host T1=${t1_candidate}"; echo "[DEBUG] Container T1=${container_t1}"; }
   done
   
-  # Check if subject is already fully processed (all timepoint directories exist)
+  # Check if subject is already fully processed (all timepoint directories exist AND have longitudinal stats)
   subject_fully_processed=1
   for tpid in "${TPIDS[@]}"; do
     expected_dir="${OUTPUT_DIR%/}/${tpid}"
-    if [[ ! -d "$expected_dir" ]]; then
+    long_dir="${OUTPUT_DIR%/}/${tpid}.long.${TEMPLATE_SUBJECT}"
+    aseg_stats="${long_dir}/stats/aseg.stats"
+    if [[ ! -d "$expected_dir" || ! -f "$aseg_stats" ]]; then
       subject_fully_processed=0
       break
     fi
@@ -291,34 +329,75 @@ if [[ $AUTO -eq 0 ]]; then
   if [[ $DEBUG -eq 1 ]]; then
     echo "[DEBUG] TEMPLATE_SUBJECT: ${TEMPLATE_SUBJECT}"; echo "[DEBUG] TPIDS: ${TPIDS[*]}"; echo "[DEBUG] T1_PATHS (container): ${T1_PATHS[*]}"; echo "[DEBUG] LONG_OPTS: ${LONG_OPTS[*]}"; echo "[DEBUG] Singularity image: ${SIF_FILE}"; echo "[DEBUG] License: ${FS_LICENSE}"; fi
   echo "Running longitudinal FastSurfer for template '${TEMPLATE_SUBJECT}' with ${#TPIDS[@]} timepoints."; echo "Command:"; printf ' %q' "${cmd[@]}"; echo
-  if [[ $DRY_RUN -eq 1 ]]; then echo "[DRY RUN] Not executing."; exit 0; fi
-  "${cmd[@]}"
-else
-  # Auto mode (with optional pilot)
-  shopt -s nullglob
-  all_subj=("${BIDS_ROOT%/}"/sub-*)
-  if [[ ${#all_subj[@]} -eq 0 ]]; then echo "[AUTO] No subjects found."; exit 1; fi
-  eligible=()
-  for sp in "${all_subj[@]}"; do
-    [[ -d "$sp" ]] || continue
-    sbase=$(basename "$sp")
-    mapfile -t ses_list < <(find "$sp" -maxdepth 1 -type d -name 'ses-*' -exec basename {} \; | sort)
-    if [[ ${#ses_list[@]} -ge 2 ]]; then
-      eligible+=("$sp")
+  if [[ $DRY_RUN -eq 1 ]]; then 
+    if [[ $NOHUP -eq 1 ]]; then
+      echo "[DRY RUN] Would run with nohup, output to: ${OUTPUT_DIR%/}/long_fastsurfer_${TEMPLATE_SUBJECT}.log"
     else
-      [[ $DEBUG -eq 1 ]] && echo "[AUTO][SKIP] $sbase has <2 sessions"
+      echo "[DRY RUN] Would run directly"
     fi
-  done
-  if [[ ${#eligible[@]} -eq 0 ]]; then echo "[AUTO] No longitudinal subjects (>=2 sessions)"; exit 1; fi
-  if [[ $PILOT -eq 1 ]]; then
-    pick_idx=$(( RANDOM % ${#eligible[@]} ))
-    echo "[AUTO][PILOT] Selected $(basename "${eligible[$pick_idx]}") from ${#eligible[@]} eligible subjects"
-    subjects=("${eligible[$pick_idx]}")
+    echo "[DRY RUN] Not executing."; exit 0; 
+  fi
+  
+  if [[ $NOHUP -eq 1 ]]; then
+    log_file="${OUTPUT_DIR%/}/long_fastsurfer_${TEMPLATE_SUBJECT}.log"
+    echo "Running with nohup, output redirected to: $log_file"
+    nohup "${cmd[@]}" > "$log_file" 2>&1 &
+    echo "Started process PID: $!"
+    echo "Monitor progress with: tail -f $log_file"
   else
-    echo "[AUTO] Processing ${#eligible[@]} eligible subjects"
-    subjects=("${eligible[@]}")
+    "${cmd[@]}"
+  fi
+else
+  # Auto mode (with optional pilot or re-run)
+  if [[ $AUTO -eq 2 ]]; then
+    # Re-run mode: read subjects from JSON
+    echo "[RE-RUN] Reading subjects from ${RERUN_FILE}"
+    if ! command -v jq >/dev/null 2>&1; then
+      echo "Error: 'jq' is required for --re-run but not found in PATH." >&2
+      exit 1
+    fi
+    
+    # Parse JSON and get subjects array
+    declare -a RERUN_SUBJECTS=()
+    while IFS= read -r subject; do
+      RERUN_SUBJECTS+=("${BIDS_ROOT%/}/$subject")
+    done < <(jq -r '.subjects[]' "${RERUN_FILE}")
+    
+    if [[ ${#RERUN_SUBJECTS[@]} -eq 0 ]]; then
+      echo "Error: No subjects found in ${RERUN_FILE}" >&2
+      exit 1
+    fi
+    
+    echo "[RE-RUN] Found ${#RERUN_SUBJECTS[@]} subjects to re-run"
+    subjects=("${RERUN_SUBJECTS[@]}")
+  else
+    # Standard auto mode
+    shopt -s nullglob
+    all_subj=("${BIDS_ROOT%/}"/sub-*)
+    if [[ ${#all_subj[@]} -eq 0 ]]; then echo "[AUTO] No subjects found."; exit 1; fi
+    eligible=()
+    for sp in "${all_subj[@]}"; do
+      [[ -d "$sp" ]] || continue
+      sbase=$(basename "$sp")
+      mapfile -t ses_list < <(find "$sp" -maxdepth 1 -type d -name 'ses-*' -exec basename {} \; | sort)
+      if [[ ${#ses_list[@]} -ge 2 ]]; then
+        eligible+=("$sp")
+      else
+        [[ $DEBUG -eq 1 ]] && echo "[AUTO][SKIP] $sbase has <2 sessions"
+      fi
+    done
+    if [[ ${#eligible[@]} -eq 0 ]]; then echo "[AUTO] No longitudinal subjects (>=2 sessions)"; exit 1; fi
+    if [[ $PILOT -eq 1 ]]; then
+      pick_idx=$(( RANDOM % ${#eligible[@]} ))
+      echo "[AUTO][PILOT] Selected $(basename "${eligible[$pick_idx]}") from ${#eligible[@]} eligible subjects"
+      subjects=("${eligible[$pick_idx]}")
+    else
+      echo "[AUTO] Processing ${#eligible[@]} eligible subjects"
+      subjects=("${eligible[@]}")
+    fi
   fi
   total_processed=0
+  declare -a pids=()
   for sp in "${subjects[@]}"; do
     sbase=$(basename "$sp")
     mapfile -t ses_list < <(find "$sp" -maxdepth 1 -type d -name 'ses-*' -exec basename {} \; | sort)
@@ -338,11 +417,13 @@ else
     [[ $skip -eq 1 ]] && continue
     if [[ ${#TPIDS_LOCAL[@]} -lt 2 ]]; then [[ $DEBUG -eq 1 ]] && echo "[AUTO][SKIP] $sbase insufficient valid sessions"; continue; fi
     
-    # Check if subject is already fully processed (all timepoint directories exist)
+    # Check if subject is already fully processed (all timepoint directories exist AND have longitudinal stats)
     subject_fully_processed=1
     for tpid in "${TPIDS_LOCAL[@]}"; do
       expected_dir="${OUTPUT_DIR%/}/${tpid}"
-      if [[ ! -d "$expected_dir" ]]; then
+      long_dir="${OUTPUT_DIR%/}/${tpid}.long.${sbase}"
+      aseg_stats="${long_dir}/stats/aseg.stats"
+      if [[ ! -d "$expected_dir" || ! -f "$aseg_stats" ]]; then
         subject_fully_processed=0
         break
       fi
@@ -357,13 +438,39 @@ else
     if [[ ${#LONG_OPTS[@]} -gt 0 ]]; then cmd+=("${LONG_OPTS[@]}"); fi
     echo "[AUTO] Subject $sbase (${#TPIDS_LOCAL[@]} sessions)"
     printf '  CMD:'; printf ' %q' "${cmd[@]}"; echo
-    if [[ $DRY_RUN -eq 1 ]]; then continue; fi
-    "${cmd[@]}" && total_processed=$((total_processed+1))
+    if [[ $DRY_RUN -eq 1 ]]; then 
+      if [[ $NOHUP -eq 1 ]]; then
+        echo "  [DRY RUN] Would run with nohup, output to: ${OUTPUT_DIR%/}/long_fastsurfer_${sbase}.log"
+      else
+        echo "  [DRY RUN] Would run directly"
+      fi
+      continue; 
+    fi
+    
+    if [[ $NOHUP -eq 1 ]]; then
+      log_file="${OUTPUT_DIR%/}/long_fastsurfer_${sbase}.log"
+      echo "  Running with nohup, output redirected to: $log_file"
+      nohup "${cmd[@]}" > "$log_file" 2>&1 &
+      pid=$!
+      echo "  Started process PID: $pid"
+      pids+=($pid)
+      total_processed=$((total_processed+1))
+    else
+      "${cmd[@]}" && total_processed=$((total_processed+1))
+    fi
   done
-  if [[ $DRY_RUN -eq 1 ]]; then
-    echo "[AUTO][DRY RUN] Done."
+  
+  if [[ $NOHUP -eq 1 && $DRY_RUN -eq 0 ]]; then
+    echo "[AUTO] Started ${#pids[@]} background processes"
+    echo "Monitor individual logs with: tail -f ${OUTPUT_DIR%/}/long_fastsurfer_*.log"
+    echo "Check running processes with: ps -p ${pids[*]}"
+    echo "PIDs: ${pids[*]}"
   else
-    echo "[AUTO] Processed $total_processed subject(s)."
+    if [[ $DRY_RUN -eq 1 ]]; then
+      echo "[AUTO][DRY RUN] Done."
+    else
+      echo "[AUTO] Processed $total_processed subject(s)."
+    fi
   fi
 fi
 
