@@ -44,8 +44,13 @@ for subj in "${input_subjects[@]}"; do
         continue
     fi
 
-    # Check recon-all.log for successful completion
-    log_file="$RESULTS_FOLDER/$subj/scripts/recon-all.log"
+    # Check recon-all.log for successful completion (find a timepoint folder for this subject)
+    timepoint_dir=$(find "$RESULTS_FOLDER" -maxdepth 1 -type d -name "${subj}_ses-*" | head -n1)
+    if [[ -z "$timepoint_dir" ]]; then
+        failed_long+=("$subj (no timepoint directory found)")
+        continue
+    fi
+    log_file="$timepoint_dir/scripts/recon-all.log"
     if [[ ! -f "$log_file" ]]; then
         failed_long+=("$subj (log file missing)")
         continue
@@ -93,7 +98,6 @@ else
     echo "No longitudinal subjects completed successfully."
 fi
 
-# Write JSON files for missing subjects
 if [[ ${#single_session[@]} -gt 0 ]]; then
     printf '%s\n' "${single_session[@]}" | jq -R -s 'split("\n") | map(select(. != "")) | {"subjects": .}' > missing_cross_subjects.json
     echo "Wrote missing cross-sectional subjects to missing_cross_subjects.json"
@@ -103,3 +107,12 @@ if [[ ${#missing_long[@]} -gt 0 ]]; then
     printf '%s\n' "${missing_long[@]}" | jq -R -s 'split("\n") | map(select(. != "")) | {"subjects": .}' > missing_long_subjects.json
     echo "Wrote missing longitudinal subjects to missing_long_subjects.json"
 fi
+
+# Summary
+total_subjects=${#input_subjects[@]}
+missing_cross_count=${#single_session[@]}
+missing_long_count=${#missing_long[@]}
+failed_count=${#failed_long[@]}
+completed_count=${#completed_long[@]}
+echo
+echo "Summary: Total subjects: $total_subjects | Cross-sectional candidates: $missing_cross_count | Missing longitudinal: $missing_long_count | Failed longitudinal: $failed_count | Completed longitudinal: $completed_count"
