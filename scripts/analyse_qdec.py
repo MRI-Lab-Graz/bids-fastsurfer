@@ -102,59 +102,58 @@ def _coerce_int_list(val) -> Optional[List[int]]:
 
 def detect_qdec_type(qdec_path: Path) -> str:
     """Detect if Qdec is cross-sectional or longitudinal.
-    
+
     Returns:
         'longitudinal' if fsid contains session markers (_ses-) or fsid != fsid-base
         'cross-sectional' if fsid == fsid-base for all rows (or no fsid-base column)
         'unknown' if Qdec is empty or cannot be determined
     """
     if not qdec_path.exists():
-        return 'unknown'
-    
+        return "unknown"
+
     try:
-        with qdec_path.open('r', newline='') as f:
+        with qdec_path.open("r", newline="") as f:
             reader = csv.DictReader(f, dialect=csv.excel_tab)
             rows = list(reader)
-        
+
         if not rows:
-            return 'unknown'
-        
+            return "unknown"
+
         # Check if fsid-base column exists
         first_row = rows[0]
-        has_base_col = 'fsid-base' in first_row
-        
+        has_base_col = "fsid-base" in first_row
+
         # Examine rows to determine type
         for row in rows:
-            fsid = row.get('fsid', '').strip()
-            fsid_base = row.get('fsid-base', fsid).strip()
-            
+            fsid = row.get("fsid", "").strip()
+            fsid_base = row.get("fsid-base", fsid).strip()
+
             # If fsid contains _ses- it's definitely longitudinal
-            if '_ses-' in fsid:
-                return 'longitudinal'
-            
+            if "_ses-" in fsid:
+                return "longitudinal"
+
             # If fsid != fsid-base (and both exist), it's longitudinal
             if has_base_col and fsid and fsid_base and fsid != fsid_base:
-                return 'longitudinal'
-        
+                return "longitudinal"
+
         # If we got here and have a fsid-base column, check if all match
         if has_base_col:
             # All fsid == fsid-base means cross-sectional
             all_match = all(
-                row.get('fsid', '').strip() == row.get('fsid-base', '').strip()
-                for row in rows
+                row.get("fsid", "").strip() == row.get("fsid-base", "").strip() for row in rows
             )
             if all_match:
-                return 'cross-sectional'
+                return "cross-sectional"
         else:
             # No fsid-base column suggests cross-sectional
-            return 'cross-sectional'
-        
+            return "cross-sectional"
+
         # Default to longitudinal if we have fsid-base but some ambiguity
-        return 'longitudinal'
-        
+        return "longitudinal"
+
     except Exception as e:
         print(f"Warning: Could not detect Qdec type from {qdec_path}: {e}", file=sys.stderr)
-        return 'unknown'
+        return "unknown"
 
 
 def check_dependencies(args: argparse.Namespace) -> List[str]:
@@ -1049,7 +1048,7 @@ def run_asegstats2table(
     qdec_path: Path, subjects_dir: Path, study_type: str = "longitudinal"
 ) -> int:
     """Run asegstats2table with SUBJECTS_DIR pointing to subjects_dir.
-    
+
     Args:
         qdec_path: Path to Qdec file
         subjects_dir: Path to subjects directory
@@ -1069,7 +1068,7 @@ def run_asegstats2table(
         aseg_out = qdec_path.parent / "aseg.long.table"
     else:
         aseg_out = qdec_path.parent / "aseg.table"
-    
+
     aseg_out.parent.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
@@ -1088,23 +1087,26 @@ def run_asegstats2table(
     else:
         # Cross-sectional: need to extract subject IDs from Qdec
         try:
-            with qdec_path.open('r', newline='') as f:
+            with qdec_path.open("r", newline="") as f:
                 reader = csv.DictReader(f, dialect=csv.excel_tab)
                 rows = list(reader)
-                subjects = [row['fsid'] for row in rows if row.get('fsid')]
+                subjects = [row["fsid"] for row in rows if row.get("fsid")]
         except Exception as e:
             print(f"ERROR: Could not read subjects from Qdec: {e}", file=sys.stderr)
             return 5
-        
-        cmd = [
-            aseg_bin,
-            "--subjects"
-        ] + subjects + [
-            "-t",
-            str(aseg_out),
-        ]
-    
-    print(f"Running: {' '.join(cmd[:10])}{'...' if len(cmd) > 10 else ''} (with SUBJECTS_DIR={env['SUBJECTS_DIR']})")
+
+        cmd = (
+            [aseg_bin, "--subjects"]
+            + subjects
+            + [
+                "-t",
+                str(aseg_out),
+            ]
+        )
+
+    print(
+        f"Running: {' '.join(cmd[:10])}{'...' if len(cmd) > 10 else ''} (with SUBJECTS_DIR={env['SUBJECTS_DIR']})"
+    )
 
     try:
         subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
@@ -1152,7 +1154,7 @@ def run_surf_mass_univariate(
             - <hemi>.<measure>.mgh
             - For each smoothing kernel k in smooth_kernels: <hemi>.<measure>_sm{k}.mgh
     under outdir (defaults to qdec_dir/surf).
-    
+
     Args:
         study_type: Either 'longitudinal' (with .long dirs) or 'cross-sectional'
     """
@@ -1587,10 +1589,10 @@ def run_aparcstats2table(
     subjects = []
     if study_type == "cross-sectional":
         try:
-            with qdec_path.open('r', newline='') as f:
+            with qdec_path.open("r", newline="") as f:
                 reader = csv.DictReader(f, dialect=csv.excel_tab)
                 rows = list(reader)
-                subjects = [row['fsid'] for row in rows if row.get('fsid')]
+                subjects = [row["fsid"] for row in rows if row.get("fsid")]
         except Exception as e:
             print(f"ERROR: Could not read subjects from Qdec: {e}", file=sys.stderr)
             return 7
@@ -1615,21 +1617,24 @@ def run_aparcstats2table(
                 ]
             else:
                 out_path = out_root / f"{hemi}.{parc}.{meas}.table"
-                cmd = [
-                    aparc_bin,
-                    "--subjects"
-                ] + subjects + [
-                    "--hemi",
-                    hemi,
-                    "--meas",
-                    meas,
-                    "--parc",
-                    parc,
-                    "-t",
-                    str(out_path),
-                ]
-            
-            print(f"Running: {' '.join(cmd[:10])}{'...' if len(cmd) > 10 else ''} (with SUBJECTS_DIR={env['SUBJECTS_DIR']})")
+                cmd = (
+                    [aparc_bin, "--subjects"]
+                    + subjects
+                    + [
+                        "--hemi",
+                        hemi,
+                        "--meas",
+                        meas,
+                        "--parc",
+                        parc,
+                        "-t",
+                        str(out_path),
+                    ]
+                )
+
+            print(
+                f"Running: {' '.join(cmd[:10])}{'...' if len(cmd) > 10 else ''} (with SUBJECTS_DIR={env['SUBJECTS_DIR']})"
+            )
             try:
                 subprocess.run(cmd, check=True, env=env)
             except subprocess.CalledProcessError as exc:
@@ -1672,7 +1677,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Determine workflow: analyze existing Qdec or generate + analyze
     qdec_provided = args.qdec is not None
-    
+
     if qdec_provided:
         # Primary workflow: analyze existing Qdec file
         if not args.qdec.exists():
@@ -1680,7 +1685,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 2
         out_path = args.qdec
         print(f"[INFO] Analyzing existing Qdec file: {out_path}")
-        
+
         # Auto-detect study type from Qdec if set to auto
         if args.type == "auto":
             detected_type = detect_qdec_type(out_path)
@@ -1698,13 +1703,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        
+
         if not args.participants.exists():
             print(f"ERROR: participants.tsv not found: {args.participants}", file=sys.stderr)
             return 2
-        
-        print("[INFO] Generating Qdec from participants.tsv (consider using generate_qdec.py for more control)")
-        
+
+        print(
+            "[INFO] Generating Qdec from participants.tsv (consider using generate_qdec.py for more control)"
+        )
+
         # Generate Qdec file
         fieldnames, participants_rows, participant_col, session_col = read_participants(
             args.participants, args.participant_column, args.session_column
@@ -1714,7 +1721,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             for fn in fieldnames:
                 print(f"- {fn}")
             return 0
-        
+
         timepoints = scan_subjects_dir(subj_dir)
         bases: Set[str] = set(tp[1] for tp in timepoints)
         print(
@@ -1782,13 +1789,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         write_qdec(out_path, header, rows)
         print(f"Wrote Qdec file: {out_path}")
-        
+
         # Consistency summary if bids provided
         if args.bids:
             summarize_consistency(
                 args.bids, subj_dir, participants_rows, participant_col, session_col, timepoints
             )
-        
+
         # Auto-detect study type from generated Qdec
         if args.type == "auto":
             study_type = detect_qdec_type(out_path)
@@ -1796,12 +1803,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             study_type = args.type
             print(f"[INFO] Using specified study type: {study_type}")
-    
+
     # From here on, both workflows converge: we have out_path (Qdec file) and study_type
     print(f"\n{'='*60}")
     print(f"Starting analysis with study type: {study_type}")
     print(f"{'='*60}\n")
-    
+
     # Set out_root if not already set (when Qdec was provided)
     if qdec_provided:
         out_root = args.output if args.output != Path("results") else out_path.parent

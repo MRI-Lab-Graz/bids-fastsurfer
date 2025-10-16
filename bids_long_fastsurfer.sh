@@ -23,7 +23,9 @@ Required:
 Optional:
   --pilot              (Auto mode) Randomly select one eligible longitudinal subject (>=2 sessions) and process only that subject.
   --re-run FILE        JSON file with subjects to re-run. Format: {"subjects": ["sub-001", "sub-002", ...]}
-  --nohup              Run commands with nohup for long-running jobs (redirects output to log files)
+  --batch_size N       Process N subjects in parallel (requires --re-run). If --nohup is used without --batch_size, defaults to 1 (sequential).
+  --nohup              Run commands with nohup for long-running jobs (redirects output to log files). 
+                       Without --batch_size, defaults to sequential processing (batch_size=1).
   --dry_run            Print the Singularity command only.
   --debug              Verbose internal debug output.
 
@@ -84,9 +86,13 @@ Examples:
   bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
     -c fastsurfer_options.json --re-run missing_subjects.json --dry_run
 
-  # Re-run with nohup for long-running jobs
+  # Re-run with nohup (defaults to sequential processing, batch_size=1)
   bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
     -c fastsurfer_options.json --re-run missing_subjects.json --nohup
+
+  # Re-run with parallel processing (6 subjects at a time)
+  bash bids_long_fastsurfer.sh /data/BIDS /data/derivatives/fastsurfer_long \
+    -c fastsurfer_options.json --re-run missing_subjects.json --nohup --batch_size 6
 
 EOF
 }
@@ -231,6 +237,12 @@ if [[ -n "${RERUN_FILE}" ]]; then
   fi
   AUTO=2  # Special mode for re-run
 
+  # If nohup is set without batch_size, default to sequential processing (batch_size=1)
+  if [[ $NOHUP -eq 1 && -z "$BATCH_SIZE" ]]; then
+    echo "[INFO] --nohup specified without --batch_size, defaulting to sequential processing (batch_size=1)"
+    BATCH_SIZE=1
+  fi
+  
   # If batch_size is set, trigger batch_fastsurfer.sh and exit
   if [[ -n "$BATCH_SIZE" ]]; then
     echo "[BATCH] Triggering batch_fastsurfer.sh with batch size $BATCH_SIZE"

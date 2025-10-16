@@ -13,14 +13,14 @@
 #   --sub <subject>        (Optional) Process only the specified subject (e.g. sub-001)
 #   --ses <session>        (Optional) Process only the specified session for the subject (e.g. ses-1)
 #   --debug                (Optional) Print debug information about parsed options and paths
-#   --nohup                (Optional) Run each subject in the background, output redirected to log files
+#   --nohup                (Optional) Run each subject in the background. Without --batch_size, defaults to sequential (batch_size=1)
 #   --batch_size N         (Optional) Process subjects in batches of N (recommended for large re-runs)
 #
 # Example:
 #   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --pilot --dry_run --debug
 #   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --sub sub-001 --ses ses-1
 #   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --nohup
-#   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --batch_size 4
+#   ./bids_fastsurfer.sh ./data ./output -c fastsurfer_options.json --nohup --batch_size 4
 
 # Show help if no arguments are provided
 SUBJECT=""
@@ -184,6 +184,12 @@ if [[ $PILOT -eq 1 ]]; then
     RANDOM_IDX=$(( RANDOM % ${#T1W_LIST[@]} ))
     T1W_LIST=( "${T1W_LIST[$RANDOM_IDX]}" )
     echo "[PILOT MODE] Only processing: ${T1W_LIST[0]}"
+fi
+
+# If nohup is set without batch_size, default to sequential processing (batch_size=1)
+if [[ $NOHUP -eq 1 && -z "$BATCH_SIZE" ]]; then
+    echo "[INFO] --nohup specified without --batch_size, defaulting to sequential processing (batch_size=1)"
+    BATCH_SIZE=1
 fi
 
 # Batch mode

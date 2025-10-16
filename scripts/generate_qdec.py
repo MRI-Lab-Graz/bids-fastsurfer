@@ -7,7 +7,7 @@ Supports both cross-sectional and longitudinal studies:
   - Cross-sectional: Single timepoint per subject (fsid = fsid-base)
   - Longitudinal: Multiple timepoints per subject (fsid contains session, fsid-base is subject)
 
-This script scans the subjects_dir for subjects and timepoints, then merges 
+This script scans the subjects_dir for subjects and timepoints, then merges
 covariates from participants.tsv to produce a Qdec file with the required columns:
 
   - fsid:       the subject/timepoint id (e.g., sub-001 or sub-001_ses-1)
@@ -50,7 +50,6 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
-import os
 import re
 import sys
 from collections import Counter
@@ -65,10 +64,7 @@ DEFAULT_LIST_LIMIT = 20
 DEFAULT_OUTPUT_FILENAME = "qdec.table.dat"
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(levelname)s: %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -164,7 +160,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="File with fsid_base IDs (one per line) to skip from QDEC",
     )
     p.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable verbose logging",
     )
@@ -250,7 +247,7 @@ def has_multiple_sessions(timepoints: List[Tuple[str, str, Optional[str]]]) -> b
             if base not in subject_sessions:
                 subject_sessions[base] = []
             subject_sessions[base].append(ses)
-    
+
     # Check if any subject has more than one session
     return any(len(sessions) > 1 for sessions in subject_sessions.values())
 
@@ -569,7 +566,9 @@ def verify_and_link_long(
     logger.info(f"Existing long dirs: {present}")
     logger.info(f"Created: {created}, Updated: {updated}, Skipped: {skipped}")
     if missing_stats:
-        logger.warning(f"Timepoints missing stats/aseg.stats in {subjects_dir}: {len(missing_stats)}")
+        logger.warning(
+            f"Timepoints missing stats/aseg.stats in {subjects_dir}: {len(missing_stats)}"
+        )
         limit = getattr(sys.modules[__name__], "_LIST_LIMIT", DEFAULT_LIST_LIMIT)
         sample = ", ".join(sorted(missing_stats)[:limit])
         logger.warning(sample + (" ..." if len(missing_stats) > limit else ""))
@@ -597,25 +596,25 @@ def build_skip_set(args) -> Set[str]:
 
 def resolve_output_path(args) -> Path:
     """Resolve the output path, handling directory inputs intelligently.
-    
+
     If the path looks like a file (has extension like .tsv, .dat, .txt), treat as file.
-    If the path looks like a directory (no extension, ends with /, or is existing dir), 
+    If the path looks like a directory (no extension, ends with /, or is existing dir),
     create directory and put default file inside it.
     If path exists as a file but no extension, append .dat extension.
     """
     out_path = args.output
-    
+
     # Check if it looks like a file (has extension)
     path_str = str(out_path)
-    if '.' in path_str and not path_str.endswith('.'):
+    if "." in path_str and not path_str.endswith("."):
         # Has extension, treat as file
         return out_path
-    
+
     # No extension - check if it exists
     if out_path.exists():
         if out_path.is_file():
             # Exists as file, append .dat extension
-            out_path = out_path.with_suffix('.dat')
+            out_path = out_path.with_suffix(".dat")
             logger.info(f"--output exists as file; writing to: {out_path}")
             return out_path
         elif out_path.is_dir():
@@ -623,12 +622,12 @@ def resolve_output_path(args) -> Path:
             out_path = out_path / DEFAULT_OUTPUT_FILENAME
             logger.info(f"--output is existing directory; writing file to: {out_path}")
             return out_path
-    
+
     # Doesn't exist or looks like directory path
     # Create directory and put default file inside
     out_path = out_path / DEFAULT_OUTPUT_FILENAME
     logger.info(f"--output looks like a directory; writing file to: {out_path}")
-    
+
     return out_path
 
 
@@ -684,20 +683,28 @@ def main(argv: Optional[List[str]] = None) -> int:
                 max_val = max(numeric_values)
                 unique_numeric = sorted(set(numeric_values))
                 if len(unique_numeric) <= 10:
-                    logger.info(f"- {col}: numeric, values {unique_numeric}, range [{min_val:.2f}, {max_val:.2f}]")
+                    logger.info(
+                        f"- {col}: numeric, values {unique_numeric}, range [{min_val:.2f}, {max_val:.2f}]"
+                    )
                 else:
-                    logger.info(f"- {col}: numeric, range [{min_val:.2f}, {max_val:.2f}], {len(unique_vals)} unique values")
+                    logger.info(
+                        f"- {col}: numeric, range [{min_val:.2f}, {max_val:.2f}], {len(unique_vals)} unique values"
+                    )
             else:
                 # Categorical
                 if len(unique_vals) <= 10:
                     sorted_unique = sorted(unique_vals)
-                    logger.info(f"- {col}: categorical, {len(unique_vals)} unique values: {', '.join(sorted_unique)}")
+                    logger.info(
+                        f"- {col}: categorical, {len(unique_vals)} unique values: {', '.join(sorted_unique)}"
+                    )
                 else:
                     logger.info(f"- {col}: categorical, {len(unique_vals)} unique values")
                     # Show most common values
                     counts = Counter(non_empty_values)
                     most_common = counts.most_common(5)
-                    logger.info(f"    top values: {', '.join(f'{val}({count})' for val, count in most_common)}")
+                    logger.info(
+                        f"    top values: {', '.join(f'{val}({count})' for val, count in most_common)}"
+                    )
 
             if missing_count > 0:
                 logger.info(f"    missing: {missing_count} rows")
@@ -711,7 +718,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Determine if linking should be enabled
     multiple_sessions = has_multiple_sessions(timepoints)
     enable_linking = False
-    
+
     if args.link_long:
         # Explicitly requested
         enable_linking = True
@@ -720,11 +727,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         # Explicitly disabled
         enable_linking = False
         if multiple_sessions:
-            logger.warning("Multiple sessions detected but linking disabled (--no-link-long specified)")
+            logger.warning(
+                "Multiple sessions detected but linking disabled (--no-link-long specified)"
+            )
     elif multiple_sessions:
         # Auto-enable when multiple sessions found
         enable_linking = True
-        logger.info(f"Multiple sessions detected ({multiple_sessions}), automatically enabling longitudinal linking")
+        logger.info(
+            f"Multiple sessions detected ({multiple_sessions}), automatically enabling longitudinal linking"
+        )
     else:
         enable_linking = False
 
