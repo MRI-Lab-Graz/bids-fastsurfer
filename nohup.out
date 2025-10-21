@@ -1,2 +1,2 @@
-[BATCH] Triggering batch_fastsurfer.sh with batch size 2
+[BATCH] Triggering batch_fastsurfer.sh with batch size 1
 Batch processing started in background. Monitor with: tail -f /data/local/129_PK01/derivatives/fastsurfer//batch_processing.log

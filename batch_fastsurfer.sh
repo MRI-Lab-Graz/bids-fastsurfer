@@ -39,7 +39,7 @@ for ((i=0; i<TOTAL_SUBJECTS; i+=BATCH_SIZE)); do
 
     # Run the batch
     echo "Starting batch processing..."
-    bash bids_long_fastsurfer.sh /data/mrivault/_0_STAGING/129_PK01/rawdata/ /data/local/129_PK01/derivatives/fastsurfer/ -c fastsurfer_options.json --re-run "$BATCH_FILE" --nohup
+    bash bids_long_fastsurfer.sh /data/mrivault/_0_STAGING/129_PK01/rawdata/ /data/local/129_PK01/derivatives/fastsurfer/ -c fastsurfer_options.json --re-run "$BATCH_FILE"
 
     # Wait for batch to complete
     echo "Waiting for batch to complete..."

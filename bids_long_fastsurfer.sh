@@ -98,6 +98,49 @@ EOF
 }
 
 ############################################
+# Helper Functions
+############################################
+
+# Create .long symlinks for a subject's timepoints
+create_long_symlinks() {
+  local output_dir="$1"
+  local template_subject="$2"
+  shift 2
+  local tpids=("$@")
+  
+  if [[ ${#tpids[@]} -eq 0 ]]; then
+    return 0
+  fi
+  
+  echo "[INFO] Creating .long symlinks for ${template_subject}..."
+  local created=0
+  for tpid in "${tpids[@]}"; do
+    local tp_dir="${output_dir%/}/${tpid}"
+    local long_link="${output_dir%/}/${tpid}.long.${template_subject}"
+    
+    if [[ ! -d "$tp_dir" ]]; then
+      echo "  [WARN] Timepoint directory not found: $tp_dir"
+      continue
+    fi
+    
+    if [[ -e "$long_link" ]]; then
+      echo "  [SKIP] ${tpid}.long.${template_subject} (already exists)"
+    else
+      if ln -s "$tp_dir" "$long_link" 2>/dev/null; then
+        echo "  [OK] Created: ${tpid}.long.${template_subject} -> ${tpid}"
+        created=$((created + 1))
+      else
+        echo "  [ERROR] Failed to create symlink: $long_link"
+      fi
+    fi
+  done
+  
+  if [[ $created -gt 0 ]]; then
+    echo "[INFO] Created $created .long symlink(s) for ${template_subject}"
+  fi
+}
+
+############################################
 # Defaults / Vars
 ############################################
 BIDS_ROOT=""
@@ -370,7 +413,13 @@ if [[ $AUTO -eq 0 ]]; then
     echo "Started process PID: $!"
     echo "Monitor progress with: tail -f $log_file"
   else
-    "${cmd[@]}"
+    if "${cmd[@]}"; then
+      # Create .long symlinks after successful processing
+      create_long_symlinks "${OUTPUT_DIR}" "${TEMPLATE_SUBJECT}" "${TPIDS[@]}"
+    else
+      echo "[ERROR] FastSurfer processing failed for ${TEMPLATE_SUBJECT}"
+      exit 1
+    fi
   fi
 else
   # Auto mode (with optional pilot or re-run)
@@ -394,7 +443,15 @@ else
     fi
     
     echo "[RE-RUN] Found ${#RERUN_SUBJECTS[@]} subjects to re-run"
-    subjects=("${RERUN_SUBJECTS[@]}")
+    
+    # Apply --pilot to re-run mode if specified
+    if [[ $PILOT -eq 1 ]]; then
+      pick_idx=$(( RANDOM % ${#RERUN_SUBJECTS[@]} ))
+      echo "[RE-RUN][PILOT] Selected $(basename "${RERUN_SUBJECTS[$pick_idx]}") from ${#RERUN_SUBJECTS[@]} subjects to re-run"
+      subjects=("${RERUN_SUBJECTS[$pick_idx]}")
+    else
+      subjects=("${RERUN_SUBJECTS[@]}")
+    fi
   else
     # Standard auto mode
     shopt -s nullglob
@@ -481,7 +538,13 @@ else
       pids+=($pid)
       total_processed=$((total_processed+1))
     else
-      "${cmd[@]}" && total_processed=$((total_processed+1))
+      if "${cmd[@]}"; then
+        total_processed=$((total_processed+1))
+        # Create .long symlinks after successful processing
+        create_long_symlinks "${OUTPUT_DIR}" "${sbase}" "${TPIDS_LOCAL[@]}"
+      else
+        echo "  [ERROR] FastSurfer processing failed for ${sbase}"
+      fi
     fi
   done
   
@@ -490,6 +553,10 @@ else
     echo "Monitor individual logs with: tail -f ${OUTPUT_DIR%/}/long_fastsurfer_*.log"
     echo "Check running processes with: ps -p ${pids[*]}"
     echo "PIDs: ${pids[*]}"
+    echo ""
+    echo "[INFO] .long symlinks will NOT be created automatically for background jobs."
+    echo "       After jobs complete, run the repair script:"
+    echo "       bash scripts/create_missing_long_symlinks.sh ${OUTPUT_DIR}"
   else
     if [[ $DRY_RUN -eq 1 ]]; then
       echo "[AUTO][DRY RUN] Done."
