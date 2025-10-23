@@ -308,43 +308,49 @@ if [[ $PILOT -eq 1 && $AUTO -eq 0 ]]; then
   exit 1
 fi
 
-# --re-run validation
-if [[ -n "${RERUN_FILE}" ]]; then
-  if [[ ! -f "${RERUN_FILE}" ]]; then
-    echo "Error: Re-run file '${RERUN_FILE}' does not exist." >&2
-    exit 1
-  fi
-  if [[ $AUTO -eq 0 ]]; then
-    echo "Error: --re-run can only be used in auto mode (omit --tid/--tpids)." >&2
-    exit 1
-  fi
-  AUTO=2  # Special mode for re-run
+  # --re-run validation
+  if [[ -n "${RERUN_FILE}" ]]; then
+    if [[ ! -f "${RERUN_FILE}" ]]; then
+      echo "Error: Re-run file '${RERUN_FILE}' does not exist." >&2
+      exit 1
+    fi
+    if [[ $AUTO -eq 0 ]]; then
+      echo "Error: --re-run can only be used in auto mode (omit --tid/--tpids)." >&2
+      exit 1
+    fi
+    AUTO=2  # Special mode for re-run
 
-  # If nohup is set without batch_size, default to sequential processing (batch_size=1)
-  if [[ $NOHUP -eq 1 && -z "$BATCH_SIZE" ]]; then
-    echo "[INFO] --nohup specified without --batch_size, defaulting to sequential processing (batch_size=1)"
-    BATCH_SIZE=1
+    # If nohup is set without batch_size, default to sequential processing (batch_size=1)
+    if [[ $NOHUP -eq 1 && -z "$BATCH_SIZE" ]]; then
+      echo "[INFO] --nohup specified without --batch_size, defaulting to sequential processing (batch_size=1)"
+      BATCH_SIZE=1
+    fi
+    
+    # If batch_size is set, trigger batch_fastsurfer.sh and exit
+    if [[ -n "$BATCH_SIZE" ]]; then
+      echo "[BATCH] Triggering batch_fastsurfer.sh with batch size $BATCH_SIZE"
+      script_dir="$(dirname "$0")"
+      
+      # Parse re-run JSON to get subjects
+      declare -a RERUN_SUBJECTS_BATCH=()
+      while IFS= read -r subject; do
+        RERUN_SUBJECTS_BATCH+=("$subject")
+      done < <(jq -r '.subjects[]' "${RERUN_FILE}")
+      
+      # Create temporary JSON file with subjects to re-run
+      tmp_subjects="${OUTPUT_DIR}/batch_rerun_subjects.json"
+      jq -n --argjson subjects "$(printf '%s\n' "${RERUN_SUBJECTS_BATCH[@]}" | jq -R . | jq -s .)" \
+         '{"subjects": $subjects}' > "$tmp_subjects"
+      
+      # Create unique log file with timestamp and type
+      TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+      LOG_FILE="$OUTPUT_DIR/batch_longitudinal_${TIMESTAMP}.log"
+      
+      nohup "$script_dir/batch_fastsurfer.sh" "$BATCH_SIZE" "$tmp_subjects" > "$LOG_FILE" 2>&1 &
+      echo "Batch processing started in background. Monitor with: tail -f $LOG_FILE"
+      exit 0
+    fi
   fi
-  
-  # If batch_size is set, trigger batch_fastsurfer.sh and exit
-  if [[ -n "$BATCH_SIZE" ]]; then
-    echo "[BATCH] Triggering batch_fastsurfer.sh with batch size $BATCH_SIZE"
-    script_dir="$(dirname "$0")"
-    
-    # Create temporary JSON file with subjects to re-run
-    tmp_subjects="${OUTPUT_DIR}/batch_rerun_subjects.json"
-    jq -n --argjson subjects "$(printf '%s\n' "${RERUN_SUBJECTS[@]}" | jq -R . | jq -s .)" \
-       '{"subjects": $subjects}' > "$tmp_subjects"
-    
-    # Create unique log file with timestamp and type
-    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-    LOG_FILE="$OUTPUT_DIR/batch_longitudinal_${TIMESTAMP}.log"
-    
-    nohup "$script_dir/batch_fastsurfer.sh" "$BATCH_SIZE" "$tmp_subjects" > "$LOG_FILE" 2>&1 &
-    echo "Batch processing started in background. Monitor with: tail -f $LOG_FILE"
-    exit 0
-  fi
-fi
 
 LICENSE_DIR=$(dirname "${FS_LICENSE}")
 
