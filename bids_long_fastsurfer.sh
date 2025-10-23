@@ -140,6 +140,42 @@ create_long_symlinks() {
   fi
 }
 
+# Clean up existing subject output directories for re-run mode
+cleanup_rerun_subjects() {
+  local output_dir="$1"
+  local rerun_file="$2"
+  
+  echo "[RE-RUN] Cleaning up existing subject directories before re-processing..."
+  
+  declare -a subjects_to_clean=()
+  while IFS= read -r subject; do
+    subjects_to_clean+=("$subject")
+  done < <(jq -r '.subjects[]' "${rerun_file}")
+  
+  if [[ ${#subjects_to_clean[@]} -eq 0 ]]; then
+    return 0
+  fi
+  
+  local cleaned=0
+  for subject in "${subjects_to_clean[@]}"; do
+    local subject_output="${output_dir%/}/${subject}"
+    
+    if [[ -d "$subject_output" ]]; then
+      echo "  [CLEANUP] Removing: ${subject_output}"
+      rm -rf "$subject_output" || {
+        echo "  [WARN] Failed to remove ${subject_output}, proceeding anyway..."
+      }
+      cleaned=$((cleaned + 1))
+    else
+      echo "  [SKIP] Directory does not exist: ${subject_output}"
+    fi
+  done
+  
+  if [[ $cleaned -gt 0 ]]; then
+    echo "[RE-RUN] Cleaned up $cleaned subject director(ies)"
+  fi
+}
+
 ############################################
 # Defaults / Vars
 ############################################
@@ -430,6 +466,9 @@ else
       echo "Error: 'jq' is required for --re-run but not found in PATH." >&2
       exit 1
     fi
+    
+    # Clean up existing directories for re-run subjects BEFORE processing
+    cleanup_rerun_subjects "${OUTPUT_DIR}" "${RERUN_FILE}"
     
     # Parse JSON and get subjects array
     declare -a RERUN_SUBJECTS=()
