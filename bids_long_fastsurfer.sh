@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Source shared validation functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/scripts/validate_fastsurfer.sh"
+
 ############################################
 # Usage / Help
 ############################################
@@ -266,23 +270,23 @@ if [[ ! -f "${CONFIG}" ]]; then
   exit 1
 fi
 
+# Quick check for jq (needed to parse config)
 if ! command -v jq >/dev/null 2>&1; then
   echo "Error: 'jq' is required but not found in PATH." >&2
   exit 1
 fi
-if ! command -v singularity >/dev/null 2>&1; then
-  echo "Error: 'singularity' not found in PATH." >&2
-  exit 1
-fi
 
-if [[ ! -d "${BIDS_ROOT}" ]]; then
-  echo "Error: BIDS root '${BIDS_ROOT}' does not exist or is not a directory." >&2
+# Extract config values early for validation
+SIF_FILE=$(jq -r '.sif_file // empty' "${CONFIG}")
+FS_LICENSE=$(jq -r '.fs_license // empty' "${CONFIG}")
+
+# Run comprehensive validation
+if ! validate_requirements "${BIDS_ROOT}" "${OUTPUT_DIR}" "${CONFIG}" "${SIF_FILE}" "${FS_LICENSE}"; then
+  echo ""
+  echo "Validation failed. Please fix the errors above."
   exit 1
 fi
-if [[ ! -d "${OUTPUT_DIR}" ]]; then
-  echo "Error: Output directory '${OUTPUT_DIR}' does not exist." >&2
-  exit 1
-fi
+echo ""
 
 if [[ $AUTO -eq 0 ]]; then
   if [[ -z "${TEMPLATE_SUBJECT}" ]]; then
@@ -330,21 +334,6 @@ if [[ -n "${RERUN_FILE}" ]]; then
     echo "Batch processing started in background. Monitor with: tail -f $OUTPUT_DIR/batch_processing.log"
     exit 0
   fi
-fi
-
-############################################
-# Extract Top-level Config Values
-############################################
-SIF_FILE=$(jq -r '.sif_file // empty' "${CONFIG}")
-FS_LICENSE=$(jq -r '.fs_license // empty' "${CONFIG}")
-
-if [[ -z "${SIF_FILE}" || ! -f "${SIF_FILE}" ]]; then
-  echo "Error: Singularity image file '${SIF_FILE}' does not exist (sif_file in config)." >&2
-  exit 1
-fi
-if [[ -z "${FS_LICENSE}" || ! -f "${FS_LICENSE}" ]]; then
-  echo "Error: FreeSurfer license file '${FS_LICENSE}' does not exist (fs_license in config)." >&2
-  exit 1
 fi
 
 LICENSE_DIR=$(dirname "${FS_LICENSE}")

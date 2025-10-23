@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# Source shared validation functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/scripts/validate_fastsurfer.sh"
+
+############################################
+# Main Script
+############################################
+
 
 
 # Usage: ./bids_fastsurfer.sh /bids-folder /outputfolder -c fastsurfer_options.json [--dry_run] [--pilot] [--debug] [--nohup] [--batch_size N]
@@ -115,22 +123,34 @@ if [[ -z "$BIDS_DATA" || -z "$OUTPUT_DIR" || -z "$CONFIG" ]]; then
     exit 1
 fi
 
-# Check if input/output folders and license file exist
-if [[ ! -d "$BIDS_DATA" ]]; then
-    echo "Error: BIDS input directory '$BIDS_DATA' does not exist."
-    exit 1
+# Resolve CONFIG to absolute path
+if [[ -n "$CONFIG" && ! "$CONFIG" =~ ^/ ]]; then
+    CONFIG="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
 fi
-if [[ ! -d "$OUTPUT_DIR" ]]; then
-    echo "Error: Output directory '$OUTPUT_DIR' does not exist."
+
+# Quick check for jq before validation
+if ! command -v jq >/dev/null 2>&1; then
+    echo "Error: 'jq' is required but not found in PATH."
     exit 1
 fi
 
+# Extract config values for validation
+SIF_FILE=$(jq -r .sif_file "$CONFIG" 2>/dev/null)
+LICENSE_PATH=$(jq -r .fs_license "$CONFIG" 2>/dev/null)
 
-LICENSE_PATH=$(jq -r .fs_license "$CONFIG")
-if [[ ! -f "$LICENSE_PATH" ]]; then
-    echo "Error: FreeSurfer license file '$LICENSE_PATH' does not exist."
+if [[ -z "$SIF_FILE" || -z "$LICENSE_PATH" ]]; then
+    echo "Error: Could not parse sif_file or fs_license from config: $CONFIG"
     exit 1
 fi
+
+# Run comprehensive validation
+if ! validate_requirements "$BIDS_DATA" "$OUTPUT_DIR" "$CONFIG" "$SIF_FILE" "$LICENSE_PATH"; then
+    echo ""
+    echo "Validation failed. Please fix the errors above."
+    exit 1
+fi
+echo ""
+
 LICENSE_DIR=$(dirname "$LICENSE_PATH")
 
 
@@ -234,11 +254,6 @@ for t1w_img in "${T1W_LIST[@]}"; do
     fi
 
     # Always set --sid, --t1, --sd, --fs_license, --3T
-    SIF_FILE=$(jq -r .sif_file "$CONFIG")
-    if [[ ! -f "$SIF_FILE" ]]; then
-        echo "Error: Singularity image file '$SIF_FILE' does not exist."
-        exit 1
-    fi
     # Ensure BIDS_DATA ends with a single slash
     BIDS_DATA_SLASH="$BIDS_DATA"
     [[ "${BIDS_DATA_SLASH}" != */ ]] && BIDS_DATA_SLASH="${BIDS_DATA_SLASH}/"
