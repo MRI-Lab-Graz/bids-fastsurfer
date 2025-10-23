@@ -82,34 +82,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-DEBUG=0
 
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -c|--config)
-            CONFIG="$2"
-            shift 2
-            ;;
-        --dry_run)
-            DRY_RUN=1
-            shift
-            ;;
-
-        --pilot)
-            PILOT=1
-            shift
-            ;;
-        --debug)
-            DEBUG=1
-            shift
-            ;;
-        *)
-            echo "Unknown argument: $1"
-            exit 1
-            ;;
-    esac
-done
+# Initialize variables that might not be set
+DRY_RUN=${DRY_RUN:-0}
+PILOT=${PILOT:-0}
+DEBUG=${DEBUG:-0}
 
 # Resolve CONFIG to absolute path
 if [[ -n "$CONFIG" && ! "$CONFIG" =~ ^/ ]]; then
@@ -214,13 +191,95 @@ fi
 
 # Batch mode
 if [[ -n "$BATCH_SIZE" ]]; then
-    echo "[BATCH] Triggering batch_fastsurfer.sh with batch size $BATCH_SIZE"
-    script_dir="$(dirname "$0")"
-    # Write subject list to a temp file
-    tmp_subjects="${OUTPUT_DIR}/batch_subjects.txt"
-    printf '%s\n' "${T1W_LIST[@]}" > "$tmp_subjects"
-    nohup "$script_dir/batch_fastsurfer.sh" "$BATCH_SIZE" "$tmp_subjects" > "$OUTPUT_DIR/batch_processing.log" 2>&1 &
-    echo "Batch processing started in background. Monitor with: tail -f $OUTPUT_DIR/batch_processing.log"
+    echo "[BATCH] Processing subjects in batches of $BATCH_SIZE"
+    
+    # Create unique log file with timestamp and type
+    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+    LOG_FILE="$OUTPUT_DIR/batch_cross_${TIMESTAMP}.log"
+    
+    # Process in batches
+    total_subjects=${#T1W_LIST[@]}
+    for ((i=0; i<total_subjects; i+=BATCH_SIZE)); do
+        batch_start=$i
+        batch_end=$((i+BATCH_SIZE-1))
+        if [[ $batch_end -ge $total_subjects ]]; then
+            batch_end=$((total_subjects-1))
+        fi
+        
+        echo "Processing batch $((i/BATCH_SIZE + 1)): subjects $batch_start to $batch_end" >> "$LOG_FILE"
+        
+        # Process this batch
+        batch_pids=()
+        for ((j=batch_start; j<=batch_end; j++)); do
+            t1w_img="${T1W_LIST[$j]}"
+            fname=$(basename "$t1w_img")
+            subj=$(echo "$fname" | grep -o 'sub-[^_]*')
+            sess=$(echo "$fname" | grep -o 'ses-[^_]*')
+            if [[ -n "$sess" ]]; then
+                sid="${subj}_${sess}"
+            else
+                sid="$subj"
+            fi
+            
+            # Build command (same logic as below)
+            t2w_img=""
+            t2_pattern="${subj}"
+            if [[ -n "$sess" ]]; then
+                t2_pattern="${subj}_${sess}"
+            fi
+            t2w_img=$(find "$BIDS_DATA" -type f -name "${t2_pattern}_*T2w.nii.gz" | head -n1)
+            
+            extra_opts=$(parse_json_options_cross "$CONFIG")
+            if [[ -n "$t2w_img" ]]; then
+                extra_opts="$extra_opts --t2 /data/$(basename "$t2w_img")"
+            fi
+            
+            BIDS_DATA_SLASH="$BIDS_DATA"
+            [[ "${BIDS_DATA_SLASH}" != */ ]] && BIDS_DATA_SLASH="${BIDS_DATA_SLASH}/"
+            t1w_relpath="${t1w_img#${BIDS_DATA_SLASH}}"
+            
+            cmd=(singularity exec --nv --no-home -B "$BIDS_DATA":/data -B "$OUTPUT_DIR":/output -B "$LICENSE_DIR":/fs_license "$SIF_FILE" /fastsurfer/run_fastsurfer.sh --t1 "/data/$t1w_relpath" --sid "$sid" --sd /output --fs_license /fs_license/license.txt --3T)
+            if [[ -n "$extra_opts" ]]; then
+                extra_opts_arr=($extra_opts)
+                cmd+=("${extra_opts_arr[@]}")
+            fi
+            
+            echo "Starting $sid in batch..." >> "$LOG_FILE"
+            nohup "${cmd[@]}" >> "$LOG_FILE" 2>&1 &
+            batch_pids+=($!)
+        done
+        
+        # Wait for this batch to complete
+        echo "Waiting for batch to complete..." >> "$LOG_FILE"
+        wait_time=0
+        max_wait=3600
+        
+        while ps aux | grep -q "singularity.*fastsurfer" | grep -v grep; do
+            sleep 30
+            wait_time=$((wait_time + 30))
+            running=$(ps aux | grep "singularity.*fastsurfer" | grep -v grep | wc -l)
+            echo "Still running: $running FastSurfer processes (waited ${wait_time}s)" >> "$LOG_FILE"
+            
+            if [[ $running -eq 0 ]]; then
+                break
+            fi
+            
+            if [[ $wait_time -ge $max_wait ]]; then
+                echo "WARNING: Timeout reached (${max_wait}s), proceeding to next batch..." >> "$LOG_FILE"
+                break
+            fi
+        done
+        
+        echo "Batch completed after ${wait_time} seconds" >> "$LOG_FILE"
+        
+        # Wait between batches
+        if [[ $((i+BATCH_SIZE)) -lt $total_subjects ]]; then
+            echo "Waiting 5 minutes before next batch..." >> "$LOG_FILE"
+            sleep 300
+        fi
+    done
+    
+    echo "All batches completed! Monitor with: tail -f $LOG_FILE"
     exit 0
 fi
 

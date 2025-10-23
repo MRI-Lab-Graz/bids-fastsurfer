@@ -229,8 +229,8 @@ while [[ $# -gt 0 ]]; do
       PILOT=1; shift ;;
     --re-run)
       RERUN_FILE="${2:-}"; shift 2 ;;
-      --batch_size)
-        BATCH_SIZE="${2:-}"; shift 2 ;;
+    --batch_size)
+      BATCH_SIZE="${2:-}"; shift 2 ;;
     --nohup)
       NOHUP=1; shift ;;
     --dry_run)
@@ -330,8 +330,18 @@ if [[ -n "${RERUN_FILE}" ]]; then
   if [[ -n "$BATCH_SIZE" ]]; then
     echo "[BATCH] Triggering batch_fastsurfer.sh with batch size $BATCH_SIZE"
     script_dir="$(dirname "$0")"
-    nohup "$script_dir/batch_fastsurfer.sh" "$BATCH_SIZE" "$RERUN_FILE" > "$OUTPUT_DIR/batch_processing.log" 2>&1 &
-    echo "Batch processing started in background. Monitor with: tail -f $OUTPUT_DIR/batch_processing.log"
+    
+    # Create temporary JSON file with subjects to re-run
+    tmp_subjects="${OUTPUT_DIR}/batch_rerun_subjects.json"
+    jq -n --argjson subjects "$(printf '%s\n' "${RERUN_SUBJECTS[@]}" | jq -R . | jq -s .)" \
+       '{"subjects": $subjects}' > "$tmp_subjects"
+    
+    # Create unique log file with timestamp and type
+    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+    LOG_FILE="$OUTPUT_DIR/batch_longitudinal_${TIMESTAMP}.log"
+    
+    nohup "$script_dir/batch_fastsurfer.sh" "$BATCH_SIZE" "$tmp_subjects" > "$LOG_FILE" 2>&1 &
+    echo "Batch processing started in background. Monitor with: tail -f $LOG_FILE"
     exit 0
   fi
 fi
