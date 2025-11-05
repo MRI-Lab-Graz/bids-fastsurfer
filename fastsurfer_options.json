@@ -10,7 +10,7 @@
     "no_asegdkt": false,
     "no_cereb": false,
     "no_hypothal": false,
-    "t2": null,
+    "t2": false,
     "reg_mode": "coreg",
     "qc_snap": false,
     "surf_only": false,
