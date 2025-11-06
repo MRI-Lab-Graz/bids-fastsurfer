@@ -41,29 +41,13 @@ for ((i=0; i<TOTAL_SUBJECTS; i+=BATCH_SIZE)); do
     echo "Starting batch processing..."
     bash bids_long_fastsurfer.sh /data/mrivault/_0_STAGING/129_PK01/rawdata/ /data/local/129_PK01/derivatives/fastsurfer/ -c fastsurfer_options.json --re-run "$BATCH_FILE"
 
-    # Wait for batch to complete - check for singularity processes instead
+    # Wait for batch to complete
     echo "Waiting for batch to complete..."
-    WAIT_TIME=0
-    MAX_WAIT=3600  # 1 hour timeout
-    
-    while ps aux | grep -q "singularity.*fastsurfer" | grep -v grep; do
-        sleep 30
-        WAIT_TIME=$((WAIT_TIME + 30))
-        RUNNING=$(ps aux | grep "singularity.*fastsurfer" | grep -v grep | wc -l)
-        echo "Still running: $RUNNING FastSurfer processes (waited ${WAIT_TIME}s)"
-        
-        if [[ $RUNNING -eq 0 ]]; then
-            break
-        fi
-        
-        # Timeout check
-        if [[ $WAIT_TIME -ge $MAX_WAIT ]]; then
-            echo "WARNING: Timeout reached (${MAX_WAIT}s), proceeding to next batch..."
-            break
-        fi
+    while ps aux | grep -q "long_fastsurfer.sh"; do
+        sleep 60
+        RUNNING=$(ps aux | grep "long_fastsurfer.sh" | grep -v grep | wc -l)
+        echo "Still running: $RUNNING processes"
     done
-    
-    echo "Batch processing completed after ${WAIT_TIME} seconds"
 
     echo "Batch completed. Cleaning up $BATCH_FILE"
     rm "$BATCH_FILE"
@@ -76,14 +60,3 @@ for ((i=0; i<TOTAL_SUBJECTS; i+=BATCH_SIZE)); do
 done
 
 echo "All batches completed!"
-echo "Final check: ensuring no FastSurfer processes are still running..."
-sleep 5  # Brief pause to let any final processes start/finish
-
-FINAL_RUNNING=$(ps aux | grep "singularity.*fastsurfer" | grep -v grep | wc -l)
-if [[ $FINAL_RUNNING -gt 0 ]]; then
-    echo "WARNING: $FINAL_RUNNING FastSurfer processes still running"
-else
-    echo "✓ All FastSurfer processes completed successfully"
-fi
-
-echo "Batch processing finished at $(date)"

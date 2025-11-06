@@ -37,31 +37,57 @@ for subj in "${input_subjects[@]}"; do
     fi
     
     # For >=2 sessions, check longitudinal results
-    # Check if aseg.stats exists in longitudinal output
-    aseg_file=$(find "$RESULTS_FOLDER" -maxdepth 4 -type f -name 'aseg.stats' | grep "$subj" | head -n1)
-    if [[ -z "$aseg_file" ]]; then
+    if [[ $ses_count -ge 2 ]]; then
+        # Build list of expected timepoint IDs from BIDS (sub-XXX_ses-YYY)
+        mapfile -t ses_list < <(find "$BIDS_FOLDER/$subj" -maxdepth 1 -type d -name 'ses-*' -exec basename {} \; | sort)
+        expected_tpids=()
+        for ses in "${ses_list[@]}"; do
+            expected_tpids+=("${subj}_${ses}")
+        done
+
+        # Find .long.<template> symlinks in top-level results directory
+        mapfile -t long_links < <(find "$RESULTS_FOLDER" -maxdepth 1 -type l -name "*.long.${subj}" -exec basename {} \; 2>/dev/null || true)
+
+        # If number of long symlinks equals number of sessions, assume longitudinal processing completed
+        if [[ ${#long_links[@]} -eq ${#expected_tpids[@]} && ${#long_links[@]} -gt 0 ]]; then
+            # Further sanity-check: ensure each linked directory has a stats/aseg.stats
+            all_have_aseg=1
+            for link in "${long_links[@]}"; do
+                if [[ ! -f "${RESULTS_FOLDER%/}/${link}/stats/aseg.stats" ]]; then
+                    all_have_aseg=0
+                    break
+                fi
+            done
+            if [[ $all_have_aseg -eq 1 ]]; then
+                completed_long+=("$subj")
+            else
+                missing_long+=("$subj")
+            fi
+            continue
+        fi
+
+        # If we reached here, longitudinal outputs are incomplete or missing
         missing_long+=("$subj")
         continue
     fi
 
-    # Check recon-all.log for successful completion (find a timepoint folder for this subject)
-    timepoint_dir=$(find "$RESULTS_FOLDER" -maxdepth 1 -type d -name "${subj}_ses-*" | head -n1)
-    if [[ -z "$timepoint_dir" ]]; then
-        failed_long+=("$subj (no timepoint directory found)")
-        continue
-    fi
-    log_file="$timepoint_dir/scripts/recon-all.log"
-    if [[ ! -f "$log_file" ]]; then
-        failed_long+=("$subj (log file missing)")
-        continue
-    fi
+    # For single-session subjects, check cross-sectional outputs
+    if [[ $ses_count -eq 1 ]]; then
+        # Expect a timepoint output directory like <sub>_ses-*/
+        timepoint_dir=$(find "$RESULTS_FOLDER" -maxdepth 1 -type d -name "${subj}_ses-*" | head -n1 || true)
+        if [[ -z "$timepoint_dir" ]]; then
+            # No output at all for this session
+            missing_cross+=("$subj")
+            continue
+        fi
 
-    # Get last line of log
-    last_line=$(tail -n1 "$log_file")
-    if [[ "$last_line" =~ finished\ without\ error ]]; then
-        completed_long+=("$subj")
-    else
-        failed_long+=("$subj (log does not indicate success: $last_line)")
+        # Check for aseg.stats in that timepoint's stats folder
+        if [[ -f "${timepoint_dir}/stats/aseg.stats" ]]; then
+            completed_long+=("$subj")
+        else
+            missing_cross+=("$subj")
+        fi
+        continue
     fi
 done
 
@@ -98,8 +124,8 @@ else
     echo "No longitudinal subjects completed successfully."
 fi
 
-if [[ ${#single_session[@]} -gt 0 ]]; then
-    printf '%s\n' "${single_session[@]}" | jq -R -s 'split("\n") | map(select(. != "")) | {"subjects": .}' > missing_cross_subjects.json
+if [[ ${#missing_cross[@]} -gt 0 ]]; then
+    printf '%s\n' "${missing_cross[@]}" | jq -R -s 'split("\n") | map(select(. != "")) | {"subjects": .}' > missing_cross_subjects.json
     echo "Wrote missing cross-sectional subjects to missing_cross_subjects.json"
 fi
 
@@ -110,9 +136,14 @@ fi
 
 # Summary
 total_subjects=${#input_subjects[@]}
-missing_cross_count=${#single_session[@]}
+cross_count=${#single_session[@]}
+no_session_count=${#no_session[@]}
+missing_cross_count=${#missing_cross[@]}
 missing_long_count=${#missing_long[@]}
-failed_count=${#failed_long[@]}
-completed_count=${#completed_long[@]}
+long_count=$(( total_subjects - cross_count - no_session_count ))
 echo
-echo "Summary: Total subjects: $total_subjects | Cross-sectional candidates: $missing_cross_count | Missing longitudinal: $missing_long_count | Failed longitudinal: $failed_count | Completed longitudinal: $completed_count"
+echo "total: $total_subjects"
+echo "cross: $cross_count"
+echo "missing-cross: $missing_cross_count"
+echo "long: $long_count"
+echo "missing-long: $missing_long_count"

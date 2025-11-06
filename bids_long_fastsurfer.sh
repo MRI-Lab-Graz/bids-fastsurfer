@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Source shared validation functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/scripts/validate_fastsurfer.sh"
-
 ############################################
 # Usage / Help
 ############################################
@@ -144,42 +140,6 @@ create_long_symlinks() {
   fi
 }
 
-# Clean up existing subject output directories for re-run mode
-cleanup_rerun_subjects() {
-  local output_dir="$1"
-  local rerun_file="$2"
-  
-  echo "[RE-RUN] Cleaning up existing subject directories before re-processing..."
-  
-  declare -a subjects_to_clean=()
-  while IFS= read -r subject; do
-    subjects_to_clean+=("$subject")
-  done < <(jq -r '.subjects[]' "${rerun_file}")
-  
-  if [[ ${#subjects_to_clean[@]} -eq 0 ]]; then
-    return 0
-  fi
-  
-  local cleaned=0
-  for subject in "${subjects_to_clean[@]}"; do
-    local subject_output="${output_dir%/}/${subject}"
-    
-    if [[ -d "$subject_output" ]]; then
-      echo "  [CLEANUP] Removing: ${subject_output}"
-      rm -rf "$subject_output" || {
-        echo "  [WARN] Failed to remove ${subject_output}, proceeding anyway..."
-      }
-      cleaned=$((cleaned + 1))
-    else
-      echo "  [SKIP] Directory does not exist: ${subject_output}"
-    fi
-  done
-  
-  if [[ $cleaned -gt 0 ]]; then
-    echo "[RE-RUN] Cleaned up $cleaned subject director(ies)"
-  fi
-}
-
 ############################################
 # Defaults / Vars
 ############################################
@@ -229,8 +189,8 @@ while [[ $# -gt 0 ]]; do
       PILOT=1; shift ;;
     --re-run)
       RERUN_FILE="${2:-}"; shift 2 ;;
-    --batch_size)
-      BATCH_SIZE="${2:-}"; shift 2 ;;
+      --batch_size)
+        BATCH_SIZE="${2:-}"; shift 2 ;;
     --nohup)
       NOHUP=1; shift ;;
     --dry_run)
@@ -270,23 +230,23 @@ if [[ ! -f "${CONFIG}" ]]; then
   exit 1
 fi
 
-# Quick check for jq (needed to parse config)
 if ! command -v jq >/dev/null 2>&1; then
   echo "Error: 'jq' is required but not found in PATH." >&2
   exit 1
 fi
-
-# Extract config values early for validation
-SIF_FILE=$(jq -r '.sif_file // empty' "${CONFIG}")
-FS_LICENSE=$(jq -r '.fs_license // empty' "${CONFIG}")
-
-# Run comprehensive validation
-if ! validate_requirements "${BIDS_ROOT}" "${OUTPUT_DIR}" "${CONFIG}" "${SIF_FILE}" "${FS_LICENSE}"; then
-  echo ""
-  echo "Validation failed. Please fix the errors above."
+if ! command -v singularity >/dev/null 2>&1; then
+  echo "Error: 'singularity' not found in PATH." >&2
   exit 1
 fi
-echo ""
+
+if [[ ! -d "${BIDS_ROOT}" ]]; then
+  echo "Error: BIDS root '${BIDS_ROOT}' does not exist or is not a directory." >&2
+  exit 1
+fi
+if [[ ! -d "${OUTPUT_DIR}" ]]; then
+  echo "Error: Output directory '${OUTPUT_DIR}' does not exist." >&2
+  exit 1
+fi
 
 if [[ $AUTO -eq 0 ]]; then
   if [[ -z "${TEMPLATE_SUBJECT}" ]]; then
@@ -308,49 +268,48 @@ if [[ $PILOT -eq 1 && $AUTO -eq 0 ]]; then
   exit 1
 fi
 
-  # --re-run validation
-  if [[ -n "${RERUN_FILE}" ]]; then
-    if [[ ! -f "${RERUN_FILE}" ]]; then
-      echo "Error: Re-run file '${RERUN_FILE}' does not exist." >&2
-      exit 1
-    fi
-    if [[ $AUTO -eq 0 ]]; then
-      echo "Error: --re-run can only be used in auto mode (omit --tid/--tpids)." >&2
-      exit 1
-    fi
-    AUTO=2  # Special mode for re-run
-
-    # If nohup is set without batch_size, default to sequential processing (batch_size=1)
-    if [[ $NOHUP -eq 1 && -z "$BATCH_SIZE" ]]; then
-      echo "[INFO] --nohup specified without --batch_size, defaulting to sequential processing (batch_size=1)"
-      BATCH_SIZE=1
-    fi
-    
-    # If batch_size is set, trigger batch_fastsurfer.sh and exit
-    if [[ -n "$BATCH_SIZE" ]]; then
-      echo "[BATCH] Triggering batch_fastsurfer.sh with batch size $BATCH_SIZE"
-      script_dir="$(dirname "$0")"
-      
-      # Parse re-run JSON to get subjects
-      declare -a RERUN_SUBJECTS_BATCH=()
-      while IFS= read -r subject; do
-        RERUN_SUBJECTS_BATCH+=("$subject")
-      done < <(jq -r '.subjects[]' "${RERUN_FILE}")
-      
-      # Create temporary JSON file with subjects to re-run
-      tmp_subjects="${OUTPUT_DIR}/batch_rerun_subjects.json"
-      jq -n --argjson subjects "$(printf '%s\n' "${RERUN_SUBJECTS_BATCH[@]}" | jq -R . | jq -s .)" \
-         '{"subjects": $subjects}' > "$tmp_subjects"
-      
-      # Create unique log file with timestamp and type
-      TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-      LOG_FILE="$OUTPUT_DIR/batch_longitudinal_${TIMESTAMP}.log"
-      
-      nohup "$script_dir/batch_fastsurfer.sh" "$BATCH_SIZE" "$tmp_subjects" > "$LOG_FILE" 2>&1 &
-      echo "Batch processing started in background. Monitor with: tail -f $LOG_FILE"
-      exit 0
-    fi
+# --re-run validation
+if [[ -n "${RERUN_FILE}" ]]; then
+  if [[ ! -f "${RERUN_FILE}" ]]; then
+    echo "Error: Re-run file '${RERUN_FILE}' does not exist." >&2
+    exit 1
   fi
+  if [[ $AUTO -eq 0 ]]; then
+    echo "Error: --re-run can only be used in auto mode (omit --tid/--tpids)." >&2
+    exit 1
+  fi
+  AUTO=2  # Special mode for re-run
+
+  # If nohup is set without batch_size, default to sequential processing (batch_size=1)
+  if [[ $NOHUP -eq 1 && -z "$BATCH_SIZE" ]]; then
+    echo "[INFO] --nohup specified without --batch_size, defaulting to sequential processing (batch_size=1)"
+    BATCH_SIZE=1
+  fi
+  
+  # If batch_size is set, trigger batch_fastsurfer.sh and exit
+  if [[ -n "$BATCH_SIZE" ]]; then
+    echo "[BATCH] Triggering batch_fastsurfer.sh with batch size $BATCH_SIZE"
+    script_dir="$(dirname "$0")"
+    nohup "$script_dir/batch_fastsurfer.sh" "$BATCH_SIZE" "$RERUN_FILE" > "$OUTPUT_DIR/batch_processing.log" 2>&1 &
+    echo "Batch processing started in background. Monitor with: tail -f $OUTPUT_DIR/batch_processing.log"
+    exit 0
+  fi
+fi
+
+############################################
+# Extract Top-level Config Values
+############################################
+SIF_FILE=$(jq -r '.sif_file // empty' "${CONFIG}")
+FS_LICENSE=$(jq -r '.fs_license // empty' "${CONFIG}")
+
+if [[ -z "${SIF_FILE}" || ! -f "${SIF_FILE}" ]]; then
+  echo "Error: Singularity image file '${SIF_FILE}' does not exist (sif_file in config)." >&2
+  exit 1
+fi
+if [[ -z "${FS_LICENSE}" || ! -f "${FS_LICENSE}" ]]; then
+  echo "Error: FreeSurfer license file '${FS_LICENSE}' does not exist (fs_license in config)." >&2
+  exit 1
+fi
 
 LICENSE_DIR=$(dirname "${FS_LICENSE}")
 
@@ -471,9 +430,6 @@ else
       echo "Error: 'jq' is required for --re-run but not found in PATH." >&2
       exit 1
     fi
-    
-    # Clean up existing directories for re-run subjects BEFORE processing
-    cleanup_rerun_subjects "${OUTPUT_DIR}" "${RERUN_FILE}"
     
     # Parse JSON and get subjects array
     declare -a RERUN_SUBJECTS=()
