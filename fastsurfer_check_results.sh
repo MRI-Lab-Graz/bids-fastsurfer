@@ -15,7 +15,8 @@ print_usage(){
     echo
 }
 
-# Parse optional flags first
+# Parse flags and positional args (allow flags anywhere)
+POSITIONAL_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)
@@ -31,12 +32,20 @@ while [[ $# -gt 0 ]]; do
             print_usage
             exit 0
             ;;
+        --*)
+            echo "Unknown option: $1"
+            print_usage
+            exit 1
+            ;;
         *)
-            break
+            POSITIONAL_ARGS+=("$1")
+            shift
             ;;
     esac
 done
 
+# Restore positional parameters
+set -- "${POSITIONAL_ARGS[@]}"
 if [[ $# -ne 2 ]]; then
     print_usage
     exit 1

@@ -410,15 +410,23 @@ if [[ $AUTO -eq 0 ]]; then
     log_file="${OUTPUT_DIR%/}/long_fastsurfer_${TEMPLATE_SUBJECT}.log"
     echo "Running with nohup, output redirected to: $log_file"
     nohup "${cmd[@]}" > "$log_file" 2>&1 &
-    echo "Started process PID: $!"
+    pid=$!
+    echo "Started process PID: $pid"
     echo "Monitor progress with: tail -f $log_file"
+    # Spawn a background monitor to capture non-zero exit codes and save context to an error log
+    ERROR_LOG="${OUTPUT_DIR%/}/fastsurfer_errors.log"
+    ( pid_to_wait=$pid; wait $pid_to_wait; rc=$?; if [[ $rc -ne 0 ]]; then echo "$(date) [ERROR] ${TEMPLATE_SUBJECT} exited with code $rc (nohup) PID=$pid_to_wait" >> "$ERROR_LOG"; echo "CMD: ${cmd[*]}" >> "$ERROR_LOG"; echo "--- tail of ${log_file} ---" >> "$ERROR_LOG"; tail -n 300 "$log_file" >> "$ERROR_LOG" 2>/dev/null; echo "--- end tail ---" >> "$ERROR_LOG"; fi ) &
   else
     if "${cmd[@]}"; then
       # Create .long symlinks after successful processing
       create_long_symlinks "${OUTPUT_DIR}" "${TEMPLATE_SUBJECT}" "${TPIDS[@]}"
     else
-      echo "[ERROR] FastSurfer processing failed for ${TEMPLATE_SUBJECT}"
-      exit 1
+      rc=$?
+      ERROR_LOG="${OUTPUT_DIR%/}/fastsurfer_errors.log"
+      echo "$(date) [ERROR] ${TEMPLATE_SUBJECT} exited with code $rc (foreground)" >> "$ERROR_LOG"
+      echo "CMD: ${cmd[*]}" >> "$ERROR_LOG"
+      echo "Nohup/direct log not available; consider re-running with --nohup to capture logs." >> "$ERROR_LOG"
+      exit $rc
     fi
   fi
 else
@@ -537,13 +545,20 @@ else
       echo "  Started process PID: $pid"
       pids+=($pid)
       total_processed=$((total_processed+1))
+      # Background monitor to record non-zero exit codes into a central error log
+      ERROR_LOG="${OUTPUT_DIR%/}/fastsurfer_errors.log"
+      ( pid_to_wait=$pid; wait $pid_to_wait; rc=$?; if [[ $rc -ne 0 ]]; then echo "$(date) [ERROR] ${sbase} exited with code $rc (nohup) PID=$pid_to_wait" >> "$ERROR_LOG"; echo "CMD: ${cmd[*]}" >> "$ERROR_LOG"; echo "--- tail of ${log_file} ---" >> "$ERROR_LOG"; tail -n 300 "$log_file" >> "$ERROR_LOG" 2>/dev/null; echo "--- end tail ---" >> "$ERROR_LOG"; fi ) &
     else
       if "${cmd[@]}"; then
         total_processed=$((total_processed+1))
         # Create .long symlinks after successful processing
         create_long_symlinks "${OUTPUT_DIR}" "${sbase}" "${TPIDS_LOCAL[@]}"
       else
-        echo "  [ERROR] FastSurfer processing failed for ${sbase}"
+        rc=$?
+        ERROR_LOG="${OUTPUT_DIR%/}/fastsurfer_errors.log"
+        echo "$(date) [ERROR] ${sbase} exited with code $rc (foreground)" >> "$ERROR_LOG"
+        echo "CMD: ${cmd[*]}" >> "$ERROR_LOG"
+        echo "Nohup/direct log not available; consider re-running with --nohup to capture logs." >> "$ERROR_LOG"
       fi
     fi
   done
