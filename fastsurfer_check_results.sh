@@ -3,8 +3,42 @@
 # Compares subjects in BIDS_FOLDER to completed outputs in RESULTS_FOLDER and lists missing or failed subjects.
 # Also checks session counts and suggests processing methods.
 
+DRY_RUN=1
+FORCE_DELETE=0
+
+print_usage(){
+    echo "Usage: $0 [--dry-run] [--force-delete] <BIDS_FOLDER> <RESULTS_FOLDER>"
+    echo
+    echo "Options:"
+    echo "  --dry-run        (default) Only report what would be deleted; do not remove or move files"
+    echo "  --force-delete   Move matching partial result directories to a timestamped backup inside RESULTS_FOLDER"
+    echo
+}
+
+# Parse optional flags first
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        --force-delete)
+            FORCE_DELETE=1
+            DRY_RUN=0
+            shift
+            ;;
+        -h|--help)
+            print_usage
+            exit 0
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
 if [[ $# -ne 2 ]]; then
-    echo "Usage: $0 <BIDS_FOLDER> <RESULTS_FOLDER>"
+    print_usage
     exit 1
 fi
 
@@ -59,7 +93,36 @@ for subj in "${input_subjects[@]}"; do
                 fi
             done
             if [[ $all_have_aseg -eq 1 ]]; then
-                completed_long+=("$subj")
+                # Tentatively mark completed, but check the per-subject log for 'finished' marker.
+                logfile_candidate1="${RESULTS_FOLDER%/}/long_fastsurfer_${subj}.log"
+                logfile_candidate2="${RESULTS_FOLDER%/}/long_fastsurfer_${subj}.out.log"
+                logfile=""
+                if [[ -f "$logfile_candidate1" ]]; then
+                    logfile="$logfile_candidate1"
+                elif [[ -f "$logfile_candidate2" ]]; then
+                    logfile="$logfile_candidate2"
+                else
+                    # try any matching log
+                    mapfile -t found_logs < <(find "$RESULTS_FOLDER" -maxdepth 1 -type f -name "*${subj}*.log" -print 2>/dev/null || true)
+                    if [[ ${#found_logs[@]} -gt 0 ]]; then
+                        logfile="${found_logs[0]}"
+                    fi
+                fi
+
+                if [[ -n "$logfile" ]]; then
+                    if grep -q -i "Full longitudinal processing.*finished\|finished!" "$logfile" 2>/dev/null || grep -q -i "finished" "$logfile" 2>/dev/null; then
+                        completed_long+=("$subj")
+                    elif grep -q -i "ERROR\|Exception\|Traceback\|OUT OF MEMORY\|OUT_OF_MEMORY\|Terminating squashfuse" "$logfile" 2>/dev/null; then
+                        # stats exist but log contains error markers -> failed
+                        failed_long+=("$subj")
+                    else
+                        # unable to tell from log, assume completed
+                        completed_long+=("$subj")
+                    fi
+                else
+                    # No log found but stats exist -> treat as completed
+                    completed_long+=("$subj")
+                fi
             else
                 missing_long+=("$subj")
             fi
@@ -132,6 +195,47 @@ fi
 if [[ ${#missing_long[@]} -gt 0 ]]; then
     printf '%s\n' "${missing_long[@]}" | jq -R -s 'split("\n") | map(select(. != "")) | {"subjects": .}' > missing_long_subjects.json
     echo "Wrote missing longitudinal subjects to missing_long_subjects.json"
+fi
+
+# If user requested force-delete, move matching result directories for missing subjects into a timestamped folder
+if [[ $FORCE_DELETE -eq 1 && ${#missing_long[@]} -gt 0 ]]; then
+    ts=$(date +%s)
+    backup_dir="${RESULTS_FOLDER%/}/.deleted_subjects_${ts}"
+    echo "Preparing to move ${#missing_long[@]} subject(s) to backup: $backup_dir"
+    if [[ $DRY_RUN -eq 1 ]]; then
+        echo "Dry-run mode: no files will be moved. Re-run with --force-delete to perform moves."
+    fi
+
+    for subj in "${missing_long[@]}"; do
+        # Find directories or symlinks in RESULTS_FOLDER whose basename contains the subject id
+        found=()
+        for entry in "$RESULTS_FOLDER"/*; do
+            [[ -e "$entry" ]] || continue
+            base=$(basename "$entry")
+            if [[ "$base" == *"$subj"* ]]; then
+                found+=("$entry")
+            fi
+        done
+
+        if [[ ${#found[@]} -eq 0 ]]; then
+            echo "No candidate result directories found in $RESULTS_FOLDER for subject $subj"
+            continue
+        fi
+
+        for candidate in "${found[@]}"; do
+            if [[ $DRY_RUN -eq 1 ]]; then
+                echo "Would move: $candidate -> $backup_dir/"
+            else
+                mkdir -p "$backup_dir"
+                echo "Moving: $candidate -> $backup_dir/"
+                mv "$candidate" "$backup_dir/"
+            fi
+        done
+    done
+
+    if [[ $DRY_RUN -eq 0 ]]; then
+        echo "Moved missing/partial subject directories to: $backup_dir"
+    fi
 fi
 
 # Summary
