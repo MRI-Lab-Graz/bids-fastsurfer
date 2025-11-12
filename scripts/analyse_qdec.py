@@ -65,6 +65,7 @@ import re
 import sys
 import shutil
 import subprocess
+import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 
@@ -312,6 +313,20 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--force",
         action="store_true",
         help="Overwrite/replace existing outputs where applicable (surf, qc, tables)",
+    )
+    io_group.add_argument(
+        "--pilot",
+        nargs="?",
+        const=3,
+        type=int,
+        default=None,
+        help="Run a small pilot/sample analysis using the first N subject bases (default when flag used without value: 3).",
+    )
+    # Convenience: run the whole pipeline under nohup and exit the parent process
+    io_group.add_argument(
+        "--nohup",
+        action="store_true",
+        help="Relaunch this script under nohup and exit the current process; log placed in --output",
     )
 
     # FreeSurfer .long compatibility
@@ -1083,6 +1098,7 @@ def run_asegstats2table(
             "-t",
             str(aseg_out),
             "--skip",
+            "--common-segs",
         ]
     else:
         # Cross-sectional: need to extract subject IDs from Qdec
@@ -1657,6 +1673,60 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     args = parse_args(argv)
 
+    # If user requested nohup, re-launch the same command under nohup and exit.
+    # Avoid infinite re-spawn by setting ANALYSE_QDEC_NOHUP=1 in the child's env.
+    try:
+        nohup_requested = bool(getattr(args, "nohup", False))
+    except Exception:
+        nohup_requested = False
+    if nohup_requested and os.environ.get("ANALYSE_QDEC_NOHUP") != "1":
+        # Determine output directory to place log file
+        out_root = args.output if getattr(args, "output", None) is not None else Path("results")
+        try:
+            out_root.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # best-effort: fallback to current dir
+            out_root = Path(".")
+
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = out_root / f"analyse_qdec.nohup.{ts}.log"
+
+        # Rebuild argv without the --nohup flag
+        parent_argv = argv[:] if argv is not None else sys.argv[1:]
+        filtered = [a for a in parent_argv if a != "--nohup"]
+
+        cmd = ["nohup", sys.executable, str(Path(__file__).resolve())] + filtered
+
+        print(f"[INFO] Relaunching under nohup. Log: {log_file}")
+        # Open log file for append (creates it)
+        try:
+            lf = open(str(log_file), "a")
+        except Exception:
+            lf = None
+
+        # Prepare environment: mark that child is under nohup to avoid recursion
+        env = os.environ.copy()
+        env["ANALYSE_QDEC_NOHUP"] = "1"
+
+        # Launch and detach
+        try:
+            if lf is not None:
+                p = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, env=env)
+            else:
+                p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+            print(f"[INFO] analyse_qdec.py started under nohup (PID={p.pid}).")
+            # Print machine-readable JSON line
+            try:
+                print(json.dumps({"pid": p.pid, "log": str(log_file)}))
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"ERROR: Failed to start nohup: {e}", file=sys.stderr)
+            return 1
+
+        # Parent exits successfully
+        return 0
+
     # Early dependency check
     missing_deps = check_dependencies(args)
     if missing_deps:
@@ -1677,6 +1747,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Determine workflow: analyze existing Qdec or generate + analyze
     qdec_provided = args.qdec is not None
+    # default filename for QDEC when output is a directory
+    qdec_filename = "qdec.table.dat"
 
     if qdec_provided:
         # Primary workflow: analyze existing Qdec file
@@ -1694,6 +1766,91 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             study_type = args.type
             print(f"[INFO] Using specified study type: {study_type}")
+        # Parse the provided QDEC to obtain header, rows, and timepoints for downstream checks
+        header = []
+        rows = []
+        timepoints = []
+        try:
+            with out_path.open("r", newline="") as fh:
+                reader = csv.reader(fh, dialect=csv.excel_tab)
+                all_rows = list(reader)
+            if not all_rows or len(all_rows) < 2:
+                print(f"ERROR: Provided QDEC {out_path} contains no data rows.", file=sys.stderr)
+                return 2
+            header = all_rows[0]
+            rows = all_rows[1:]
+            # Determine fsid and fsid-base indices and build timepoints list
+            try:
+                fsid_idx = header.index("fsid")
+                base_idx = header.index("fsid-base")
+            except ValueError as e:
+                print(f"ERROR: QDEC file missing required columns: {e}", file=sys.stderr)
+                return 2
+            for r in rows:
+                if len(r) <= max(fsid_idx, base_idx):
+                    continue
+                fsid = r[fsid_idx]
+                base = r[base_idx]
+                m = SUBJECT_DIR_PATTERN.match(fsid)
+                ses = m.group("ses") if m else None
+                timepoints.append((fsid, base, ses))
+
+            # Pilot sampling: if requested, select the first N unique bases and
+            # keep only rows/timepoints for those bases. Write sampled QDEC under
+            # the chosen output root for reproducibility.
+            pilot_path = None
+            if getattr(args, "pilot", None) is not None:
+                n = int(args.pilot) if args.pilot else 3
+                sample_bases: List[str] = []
+                seen: Set[str] = set()
+                for _, base, _ in timepoints:
+                    if base not in seen:
+                        seen.add(base)
+                        sample_bases.append(base)
+                    if len(sample_bases) >= n:
+                        break
+
+                if not sample_bases:
+                    print(f"ERROR: Pilot requested but no subject bases found in QDEC {out_path}", file=sys.stderr)
+                    return 2
+
+                # Decide where to write pilot QDEC: prefer explicit --output, else same dir as provided QDEC
+                pilot_out_root = args.output if args.output != Path("results") else out_path.parent
+                pilot_out_root.mkdir(parents=True, exist_ok=True)
+                pilot_path = pilot_out_root / f"qdec.pilot.{n}.dat"
+
+                # Filter header/rows into sampled rows preserving header
+                sampled_rows = [header]
+                for r in rows:
+                    try:
+                        if r[base_idx] in sample_bases:
+                            sampled_rows.append(r)
+                    except Exception:
+                        continue
+
+                # Write sampled QDEC
+                with pilot_path.open("w", newline="") as fh:
+                    writer = csv.writer(fh, dialect=csv.excel_tab)
+                    for r in sampled_rows:
+                        writer.writerow(r)
+                print(f"[INFO] Wrote pilot QDEC ({n} bases) to: {pilot_path}")
+
+                # Replace rows/timepoints with sampled versions for downstream steps
+                rows = sampled_rows[1:]
+                timepoints = [tp for tp in timepoints if tp[1] in sample_bases]
+                # Recompute bases and use the sampled QDEC as the downstream qdec path
+                bases = set(tp[1] for tp in timepoints) if timepoints else set()
+                out_path = pilot_path.resolve()
+
+        except Exception as e:
+            print(f"ERROR: Failed to read/parse provided QDEC {out_path}: {e}", file=sys.stderr)
+            return 2
+
+        bases: Set[str] = set(tp[1] for tp in timepoints) if timepoints else set()
+        # Placeholder participants data (used by summarize_consistency). Empty list is OK.
+        participants_rows = []
+        participant_col = "participant_id"
+        session_col = "session_id"
     else:
         # Fallback workflow: generate Qdec from participants.tsv then analyze
         if not args.participants:
@@ -1809,41 +1966,99 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"Starting analysis with study type: {study_type}")
     print(f"{'='*60}\n")
 
-    # Set out_root if not already set (when Qdec was provided)
-    if qdec_provided:
-        out_root = args.output if args.output != Path("results") else out_path.parent
-        if not prepare_output_directory(out_root, args.force):
-            print("ERROR: Output directory preparation cancelled by user.", file=sys.stderr)
-            return 1
+    # Ensure output directory / QDEC path prepared.
     try:
-        is_file_like = any(
-            str(out_root).lower().endswith(ext) for ext in (".dat", ".tsv", ".table")
-        )
-        if is_file_like:
-            # Backwards-compat: user provided a file path
-            out_path = out_root
-            out_root = out_path.parent if out_path.parent != Path("") else Path(".")
-            print(f"[INFO] --output looks like a file; will write QDEC to: {out_path}")
-            # Ensure parent directory exists
+        if qdec_provided:
+            # Use the provided QDEC path directly for downstream tools. The output
+            # root is either the user-specified --output or the directory of the
+            # provided QDEC when default output was used.
+            out_root = args.output if args.output != Path("results") else out_path.parent
             if not prepare_output_directory(out_root, args.force):
                 print("ERROR: Output directory preparation cancelled by user.", file=sys.stderr)
                 return 1
+            # Keep out_path pointing to the provided QDEC file (absolute)
+            out_path = out_path.resolve()
+            print(f"[INFO] Using provided QDEC: {out_path}; outputs will be written under: {out_root}")
         else:
-            # Directory semantics (preferred)
-            if not prepare_output_directory(out_root, args.force):
-                print("ERROR: Output directory preparation cancelled by user.", file=sys.stderr)
-                return 1
-            out_path = out_root / qdec_filename
-            print(f"[INFO] Output root: {out_root} (QDEC: {out_path})")
+            out_root = args.output
+            is_file_like = any(
+                str(out_root).lower().endswith(ext) for ext in (".dat", ".tsv", ".table")
+            )
+            if is_file_like:
+                # Backwards-compat: user provided a file path
+                out_path = out_root
+                out_root = out_path.parent if out_path.parent != Path("") else Path(".")
+                print(f"[INFO] --output looks like a file; will write QDEC to: {out_path}")
+                # Ensure parent directory exists
+                if not prepare_output_directory(out_root, args.force):
+                    print("ERROR: Output directory preparation cancelled by user.", file=sys.stderr)
+                    return 1
+            else:
+                # Directory semantics (preferred)
+                if not prepare_output_directory(out_root, args.force):
+                    print("ERROR: Output directory preparation cancelled by user.", file=sys.stderr)
+                    return 1
+                out_path = out_root / qdec_filename
+                print(f"[INFO] Output root: {out_root} (QDEC: {out_path})")
     except Exception as e:
         print(f"ERROR: Failed to prepare output directory: {e}", file=sys.stderr)
         return 1
-        # Fallback: treat as file under current dir
-        out_path = Path(qdec_filename)
-        out_root = out_path.parent
 
-    write_qdec(out_path, header, rows)
-    print(f"Wrote Qdec file: {out_path}")
+    # Basic preflight checks to catch common user mistakes early
+    try:
+        # Ensure the subjects_dir actually contains timepoints/bases
+        sd_timepoints = scan_subjects_dir(subj_dir)
+        sd_bases = set(tp[1] for tp in sd_timepoints)
+        qdec_bases = set(tp[1] for tp in timepoints) if timepoints else set()
+
+        if not sd_timepoints:
+            print(f"ERROR: No timepoint directories found under subjects_dir={subj_dir}.", file=sys.stderr)
+            print("Ensure your FastSurfer/FreeSurfer outputs are present (sub-*_ses-* directories).", file=sys.stderr)
+            return 2
+
+        if not qdec_bases:
+            print(f"ERROR: No subject bases could be extracted from QDEC {out_path}.", file=sys.stderr)
+            return 2
+
+        matched = qdec_bases & sd_bases
+        if len(matched) == 0:
+            print(
+                f"ERROR: None of the QDEC subject bases ({len(qdec_bases)}) were found under subjects_dir={subj_dir}.",
+                file=sys.stderr,
+            )
+            print("Check that --subjects-dir points to the FastSurfer/FreeSurfer derivatives directory containing sub-*_ses-* folders.", file=sys.stderr)
+            return 2
+
+        overlap = len(matched) / float(len(qdec_bases)) if qdec_bases else 0.0
+        if overlap < 0.10:
+            # Low overlap: warn the user and show examples of missing bases
+            missing = sorted(list(qdec_bases - matched))
+            sample = ", ".join(missing[:10])
+            more = " ..." if len(missing) > 10 else ""
+            print(
+                f"[WARN] Low overlap between QDEC ({len(qdec_bases)} bases) and subjects_dir ({len(sd_bases)} bases): {overlap:.1%} matched.",
+                file=sys.stderr,
+            )
+            print(f"Examples of QDEC bases missing from subjects_dir: {sample}{more}", file=sys.stderr)
+            print("If this is expected (you only want to analyze a small subset), proceed; otherwise check paths and QDEC content.", file=sys.stderr)
+
+        # Quick check: can we write into out_root?
+        try:
+            out_root.mkdir(parents=True, exist_ok=True)
+            test_file = out_root / ".write_test"
+            with test_file.open("w") as fh:
+                fh.write("ok")
+            test_file.unlink()
+        except Exception as e:
+            print(f"ERROR: Cannot write to output directory {out_root}: {e}", file=sys.stderr)
+            return 1
+    except Exception as e:
+        print(f"[WARN] Preflight checks failed: {e}", file=sys.stderr)
+
+    # Only write QDEC when we generated it here (i.e., not when user provided --qdec)
+    if not qdec_provided:
+        write_qdec(out_path, header, rows)
+        print(f"Wrote Qdec file: {out_path}")
     # Detect headless environment early to reflect in effective config and downstream calls
     try:
         _disp = os.environ.get("DISPLAY", "").strip()
@@ -1901,6 +2116,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             "summary": {
                 "bases": len(bases),
                 "timepoints": len(timepoints),
+            },
+            "pilot": {
+                "enabled": bool(getattr(args, "pilot", None) is not None),
+                "size": int(getattr(args, "pilot", None)) if getattr(args, "pilot", None) is not None else None,
+                "sample_qdec": str(pilot_path) if 'pilot_path' in locals() and pilot_path is not None else None,
             },
         }
         cfg_out = out_root / "prep_long.effective.json"

@@ -267,8 +267,8 @@ echo "  → Upgrading pip, wheel, setuptools..."
 "$MAMBA_PYTHON" -m pip install --upgrade pip wheel setuptools
 
 # Install fsqc with recommended dependencies
-echo "  → Installing fsqc from PyPI..."
-"$MAMBA_PYTHON" -m pip install fsqc
+echo "  → Installing fsqc from GitHub..."
+"$MAMBA_PYTHON" -m pip install git+https://github.com/Deep-MI/fsqc.git
 
 # Verify installation using the same Python
 echo "  → Verifying fsqc installation..."
