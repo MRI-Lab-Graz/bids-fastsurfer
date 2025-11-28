@@ -8,8 +8,16 @@ test*/
 batch*json
 test*.json
 results/
+run*txt
 test*/
+aparc_tables/
+participants.*
+aseg.*
+nohup.out
+surf/
+qdec*dat
 fslmer_out/
+fsqc/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

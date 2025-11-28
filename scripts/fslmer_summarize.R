@@ -188,9 +188,52 @@ for (roi in names(roi_groups)) {
       "non-significant"
     }
     
+    # Determine grouping variable for plot
+    group_col <- "sex" # default
+    
+    # List of potential grouping variables in priority order
+    potential_groups <- c("group_duration", "group_context", "group_binary", "group_beh_factor", "group")
+    
+    # 1. Try to infer from the current effect name
+    inferred_group <- NULL
+    for (g in potential_groups) {
+      if (grepl(g, effect_name)) {
+        inferred_group <- g
+        break
+      }
+    }
+    
+    # 2. If not in effect name, try to infer from ALL effects in the model
+    if (is.null(inferred_group) && exists("coef_df")) {
+       all_effects <- unique(coef_df$coef)
+       for (g in potential_groups) {
+         if (any(grepl(g, all_effects))) {
+           inferred_group <- g
+           break
+         }
+       }
+    }
+    
+    # 3. Fallback: check existence in data
+    if (!is.null(inferred_group) && inferred_group %in% names(dat)) {
+      group_col <- inferred_group
+    } else {
+      # Fallback to first available from priority list
+      for (g in potential_groups) {
+        if (g %in% names(dat)) {
+          group_col <- g
+          break
+        }
+      }
+    }
+
     # Some effects (e.g., derived design columns) are not ROI columns in merged data; handle gracefully
     if (roi %in% names(dat)) {
-      roi_data <- dat[c("fsid", "fsid_base", "tp", "sex", roi)]
+      cols_to_keep <- unique(c("fsid", "fsid_base", "tp", "sex", group_col, roi))
+      # If the effect itself is a column (e.g. age, eTIV), keep it
+      if (effect_name %in% names(dat)) cols_to_keep <- unique(c(cols_to_keep, effect_name))
+      
+      roi_data <- dat[cols_to_keep]
       names(roi_data)[names(roi_data) == roi] <- "value"
       roi_data <- roi_data[!is.na(roi_data$value) & !is.na(roi_data$tp), ]
       n_subj <- length(unique(roi_data$fsid_base))
@@ -198,23 +241,97 @@ for (roi in names(roi_groups)) {
       roi_data <- data.frame()
       n_subj <- length(unique(dat$fsid_base))
     }
+    
+    # Ensure the grouping column is a factor
+    if (group_col %in% names(roi_data)) {
+      roi_data[[group_col]] <- as.factor(roi_data[[group_col]])
+    }
 
     plot_path <- NA_character_
-    if (category == "significant" && nrow(roi_data) > 0 && single_effect_mode) {
-      # Only create plots for single effect mode to avoid too many plots
-      plot_obj <- ggplot(roi_data, aes(x = tp, y = value, color = sex, group = interaction(fsid_base, sex))) +
-        geom_line(alpha = 0.25) +
-        geom_point(alpha = 0.4, size = 1.5) +
-        stat_summary(aes(group = sex), fun = mean, geom = "line", linewidth = 1.1) +
-        stat_summary(aes(group = sex), fun = mean, geom = "point", size = 2.2, shape = 21, fill = "white", color = NA) +
-        labs(title = sprintf("%s — %s", roi, effect_name),
-             x = "Time point (tp)",
-             y = roi,
-             color = "Sex") +
-        theme_minimal() +
-        theme(legend.position = "bottom")
-      plot_file <- file.path(plot_dir, sprintf("%s_%s.png", roi_to_filename(roi), gsub("[^A-Za-z0-9_-]", "_", effect_name)))
-      ggsave(plot_file, plot = plot_obj, width = 6.5, height = 4.5, dpi = 150)
+    # Plot significant results (and trends if desired, but user asked for significant)
+    # We allow plotting even if not single_effect_mode, as requested
+    if ((category == "significant" || category == "trend") && nrow(roi_data) > 0) {
+      
+      # Create effect-specific subdirectory
+      safe_effect_name <- gsub("[^A-Za-z0-9_-]", "_", effect_name)
+      effect_plot_dir <- file.path(plot_dir, safe_effect_name)
+      if (!dir.exists(effect_plot_dir)) dir.create(effect_plot_dir, recursive = TRUE, showWarnings = FALSE)
+      
+      # Determine Plot Type
+      plot_type <- "longitudinal" # default
+      
+      if (grepl(":", effect_name)) {
+        plot_type <- "longitudinal"
+      } else if (effect_name == "tp") {
+        plot_type <- "longitudinal"
+      } else if (effect_name %in% names(dat) && is.numeric(dat[[effect_name]])) {
+        plot_type <- "scatter"
+      } else if (startsWith(effect_name, group_col) || effect_name == group_col) {
+        plot_type <- "boxplot"
+      }
+      
+      if (plot_type == "boxplot") {
+        # Boxplot of Mean Volume per Subject by Group
+        # Aggregate to one point per subject to avoid inflating N visually
+        subj_means <- aggregate(as.formula(paste("value ~", group_col, "+ fsid_base")), data = roi_data, FUN = mean)
+        
+        gg_plot <- ggplot(subj_means, aes(x = .data[[group_col]], y = value, fill = .data[[group_col]])) +
+          geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+          geom_jitter(width = 0.2, alpha = 0.5, size = 2) +
+          labs(title = sprintf("%s — %s (Group Effect)", roi, effect_name),
+               subtitle = "Mean volume per subject (averaged across time)",
+               x = group_col,
+               y = paste("Mean", roi)) +
+          theme_minimal() +
+          theme(
+            legend.position = "none",
+            plot.title = element_text(face = "bold", hjust = 0.5),
+            plot.subtitle = element_text(hjust = 0.5),
+            axis.title = element_text(face = "bold")
+          )
+          
+      } else if (plot_type == "scatter") {
+        # Scatter plot of Covariate vs Mean Volume
+        subj_means <- aggregate(as.formula(paste("value ~", effect_name, "+ fsid_base")), data = roi_data, FUN = mean)
+        
+        gg_plot <- ggplot(subj_means, aes(x = .data[[effect_name]], y = value)) +
+          geom_point(alpha = 0.6, size = 2, color = "steelblue") +
+          geom_smooth(method = "lm", color = "darkred", fill = "red", alpha = 0.2) +
+          labs(title = sprintf("%s — %s (Covariate Effect)", roi, effect_name),
+               subtitle = "Mean volume per subject",
+               x = effect_name,
+               y = paste("Mean", roi)) +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(face = "bold", hjust = 0.5),
+            plot.subtitle = element_text(hjust = 0.5),
+            axis.title = element_text(face = "bold")
+          )
+          
+      } else {
+        # Default Longitudinal Plot (Mean +/- SE)
+        gg_plot <- ggplot(roi_data, aes(x = tp, y = value, color = .data[[group_col]], group = .data[[group_col]])) +
+          # Mean line
+          stat_summary(fun = mean, geom = "line", linewidth = 1.2, position = position_dodge(width = 0.2)) +
+          # Error bars (Mean +/- SE)
+          stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, linewidth = 0.8, position = position_dodge(width = 0.2)) +
+          # Mean points
+          stat_summary(fun = mean, geom = "point", size = 3, shape = 21, fill = "white", stroke = 1.2, position = position_dodge(width = 0.2)) +
+          labs(title = sprintf("%s — %s", roi, effect_name),
+               x = "Time point",
+               y = roi,
+               color = group_col) +
+          theme_minimal() +
+          theme(
+            legend.position = "bottom",
+            plot.title = element_text(face = "bold", hjust = 0.5),
+            axis.title = element_text(face = "bold"),
+            panel.grid.minor = element_blank()
+          )
+      }
+      prefix <- if (category == "significant") "sign" else "trend"
+      plot_file <- file.path(effect_plot_dir, sprintf("%s_%s.png", prefix, roi_to_filename(roi)))
+      ggsave(plot_file, plot = gg_plot, width = 6, height = 4.5, dpi = 150)
       plot_path <- normalizePath(plot_file)
     }
 
@@ -228,7 +345,7 @@ for (roi in names(roi_groups)) {
       p = p,
       category = category,
       n_subjects = n_subj,
-      plot = plot_path,
+      plot = as.character(plot_path),
       stringsAsFactors = FALSE
     )
   }
