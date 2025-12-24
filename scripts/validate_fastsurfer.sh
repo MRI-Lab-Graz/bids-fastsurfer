@@ -108,12 +108,17 @@ validate_requirements() {
   # 8. Check output directory
   echo "[VALIDATION] Checking output directory..."
   if [[ ! -d "$output_dir" ]]; then
-    echo "  [ERROR] Output directory not found: $output_dir"
-    validation_errors=$((validation_errors + 1))
-  elif [[ ! -w "$output_dir" ]]; then
+    echo "  [INFO] Creating output directory: $output_dir"
+    if ! mkdir -p "$output_dir" 2>/dev/null; then
+      echo "  [ERROR] Failed to create output directory: $output_dir"
+      validation_errors=$((validation_errors + 1))
+    fi
+  fi
+  
+  if [[ -d "$output_dir" && ! -w "$output_dir" ]]; then
     echo "  [ERROR] Output directory not writable: $output_dir"
     validation_errors=$((validation_errors + 1))
-  else
+  elif [[ -d "$output_dir" ]]; then
     available_space=$(df -h "$output_dir" | awk 'NR==2 {print $4}')
     echo "  [OK] Output directory writable: $output_dir (Available: $available_space)"
   fi

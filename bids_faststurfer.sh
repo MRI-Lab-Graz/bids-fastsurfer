@@ -472,7 +472,18 @@ for t1w_img in "${T1W_LIST[@]}"; do
         log_file="$OUTPUT_DIR/fastsurfer_${sid}.log"
         echo "Running with nohup, output redirected to: $log_file"
         nohup "${cmd[@]}" > "$log_file" 2>&1 &
-        echo "Started process PID: $!"
+        pid=$!
+        echo "Started process PID: $pid"
+
+        # Sequential by default (batch_size=1 or empty)
+        if [[ -z "$BATCH_SIZE" || "$BATCH_SIZE" -le 1 ]]; then
+            wait $pid
+        else
+            # Batching: wait if we have reached the batch size limit
+            while [[ $(jobs -rp | wc -l) -ge "$BATCH_SIZE" ]]; do
+                sleep 10
+            done
+        fi
     else
         "${cmd[@]}"
     fi

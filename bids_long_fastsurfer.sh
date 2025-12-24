@@ -176,8 +176,8 @@ while [[ $# -gt 0 ]]; do
       TEMPLATE_SUBJECT="${2:-}"; AUTO=0; shift 2 ;;
     --tpids)
       shift
-      # collect until next --* or end
-      while [[ $# -gt 0 && "$1" != --* ]]; do
+      # collect until next -* or end
+      while [[ $# -gt 0 && "$1" != -* ]]; do
         TPIDS+=("$1")
         shift
       done
@@ -211,7 +211,7 @@ done
 
 # Positional expectation: BIDS_ROOT OUTPUT_DIR
 if [[ ${#POS[@]} -lt 2 ]]; then
-  echo "Error: Missing required positional arguments." >&2
+  echo "Error: Missing required positional arguments. Expected <BIDS_ROOT> and <OUTPUT_DIR>." >&2
   usage
   exit 1
 fi
@@ -244,8 +244,8 @@ if [[ ! -d "${BIDS_ROOT}" ]]; then
   exit 1
 fi
 if [[ ! -d "${OUTPUT_DIR}" ]]; then
-  echo "Error: Output directory '${OUTPUT_DIR}' does not exist." >&2
-  exit 1
+  echo "[INFO] Creating output directory: ${OUTPUT_DIR}"
+  mkdir -p "${OUTPUT_DIR}"
 fi
 
 if [[ $AUTO -eq 0 ]]; then
@@ -409,13 +409,26 @@ if [[ $AUTO -eq 0 ]]; then
   if [[ $NOHUP -eq 1 ]]; then
     log_file="${OUTPUT_DIR%/}/long_fastsurfer_${TEMPLATE_SUBJECT}.log"
     echo "Running with nohup, output redirected to: $log_file"
-    nohup "${cmd[@]}" > "$log_file" 2>&1 &
+    
+    # Use a subshell to run the command and then do the monitoring/cleanup
+    # This avoids the "wait: pid is not a child of this shell" error
+    (
+      if nohup "${cmd[@]}" > "$log_file" 2>&1; then
+        # Success: create symlinks (inherited function)
+        create_long_symlinks "${OUTPUT_DIR}" "${TEMPLATE_SUBJECT}" "${TPIDS[@]}"
+      else
+        rc=$?
+        ERROR_LOG="${OUTPUT_DIR%/}/fastsurfer_errors.log"
+        echo "$(date) [ERROR] ${TEMPLATE_SUBJECT} exited with code $rc (nohup)" >> "$ERROR_LOG"
+        echo "CMD: ${cmd[*]}" >> "$ERROR_LOG"
+        echo "--- tail of ${log_file} ---" >> "$ERROR_LOG"
+        tail -n 300 "$log_file" >> "$ERROR_LOG" 2>/dev/null
+        echo "--- end tail ---" >> "$ERROR_LOG"
+      fi
+    ) &
     pid=$!
     echo "Started process PID: $pid"
     echo "Monitor progress with: tail -f $log_file"
-    # Spawn a background monitor to capture non-zero exit codes and save context to an error log
-    ERROR_LOG="${OUTPUT_DIR%/}/fastsurfer_errors.log"
-    ( pid_to_wait=$pid; wait $pid_to_wait; rc=$?; if [[ $rc -ne 0 ]]; then echo "$(date) [ERROR] ${TEMPLATE_SUBJECT} exited with code $rc (nohup) PID=$pid_to_wait" >> "$ERROR_LOG"; echo "CMD: ${cmd[*]}" >> "$ERROR_LOG"; echo "--- tail of ${log_file} ---" >> "$ERROR_LOG"; tail -n 300 "$log_file" >> "$ERROR_LOG" 2>/dev/null; echo "--- end tail ---" >> "$ERROR_LOG"; fi ) &
   else
     if "${cmd[@]}"; then
       # Create .long symlinks after successful processing
@@ -540,14 +553,37 @@ else
     if [[ $NOHUP -eq 1 ]]; then
       log_file="${OUTPUT_DIR%/}/long_fastsurfer_${sbase}.log"
       echo "  Running with nohup, output redirected to: $log_file"
-      nohup "${cmd[@]}" > "$log_file" 2>&1 &
+      
+      # Use a subshell to run the command and then do the monitoring/cleanup
+      # This avoids the "wait: pid is not a child of this shell" error
+      (
+        if nohup "${cmd[@]}" > "$log_file" 2>&1; then
+          # Success: create symlinks (inherited function)
+          create_long_symlinks "${OUTPUT_DIR}" "${sbase}" "${TPIDS_LOCAL[@]}"
+        else
+          rc=$?
+          ERROR_LOG="${OUTPUT_DIR%/}/fastsurfer_errors.log"
+          echo "$(date) [ERROR] ${sbase} exited with code $rc (nohup)" >> "$ERROR_LOG"
+          echo "CMD: ${cmd[*]}" >> "$ERROR_LOG"
+          echo "--- tail of ${log_file} ---" >> "$ERROR_LOG"
+          tail -n 300 "$log_file" >> "$ERROR_LOG" 2>/dev/null
+          echo "--- end tail ---" >> "$ERROR_LOG"
+        fi
+      ) &
       pid=$!
       echo "  Started process PID: $pid"
       pids+=($pid)
       total_processed=$((total_processed+1))
-      # Background monitor to record non-zero exit codes into a central error log
-      ERROR_LOG="${OUTPUT_DIR%/}/fastsurfer_errors.log"
-      ( pid_to_wait=$pid; wait $pid_to_wait; rc=$?; if [[ $rc -ne 0 ]]; then echo "$(date) [ERROR] ${sbase} exited with code $rc (nohup) PID=$pid_to_wait" >> "$ERROR_LOG"; echo "CMD: ${cmd[*]}" >> "$ERROR_LOG"; echo "--- tail of ${log_file} ---" >> "$ERROR_LOG"; tail -n 300 "$log_file" >> "$ERROR_LOG" 2>/dev/null; echo "--- end tail ---" >> "$ERROR_LOG"; fi ) &
+      
+      # Sequential by default (batch_size=1 or empty)
+      if [[ -z "$BATCH_SIZE" || "$BATCH_SIZE" -le 1 ]]; then
+        wait $pid
+      else
+        # Batching: wait if we have reached the batch size limit
+        while [[ $(jobs -rp | wc -l) -ge "$BATCH_SIZE" ]]; do
+          sleep 10
+        done
+      fi
     else
       if "${cmd[@]}"; then
         total_processed=$((total_processed+1))
