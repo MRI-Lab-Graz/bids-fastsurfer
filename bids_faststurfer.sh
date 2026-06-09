@@ -46,6 +46,10 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=1
             shift
             ;;
+        --force)
+            FORCE=1
+            shift
+            ;;
         --pilot)
             PILOT=1
             shift
@@ -92,6 +96,7 @@ done
 DRY_RUN=${DRY_RUN:-0}
 PILOT=${PILOT:-0}
 DEBUG=${DEBUG:-0}
+FORCE=${FORCE:-0}
 
 # Resolve CONFIG to absolute path
 if [[ -n "$CONFIG" && ! "$CONFIG" =~ ^/ ]]; then
@@ -338,7 +343,18 @@ if [[ -n "$BATCH_SIZE" ]]; then
             else
                 sid="$subj"
             fi
-            
+
+            # Skip or force-delete if already processed
+            if [[ -d "$OUTPUT_DIR/$sid" && -f "$OUTPUT_DIR/$sid/stats/aseg.stats" ]]; then
+                if [[ $FORCE -eq 1 ]]; then
+                    echo "[FORCE] Removing existing output for $sid"
+                    rm -rf "${OUTPUT_DIR:?}/$sid"
+                else
+                    echo "[SKIP] $sid already processed (use --force to reprocess)"
+                    continue
+                fi
+            fi
+
             # Build command (use prevalidated T2_INDEX if available)
             extra_opts=$(parse_json_options_cross "$CONFIG")
             if [[ "$CROSS_T2" == "true" ]]; then
@@ -414,6 +430,17 @@ for t1w_img in "${T1W_LIST[@]}"; do
         sid="${subj}_${sess}"
     else
         sid="$subj"
+    fi
+
+    # Skip or force-delete if already processed
+    if [[ -d "$OUTPUT_DIR/$sid" && -f "$OUTPUT_DIR/$sid/stats/aseg.stats" ]]; then
+        if [[ $FORCE -eq 1 ]]; then
+            echo "[FORCE] Removing existing output for $sid"
+            rm -rf "${OUTPUT_DIR:?}/$sid"
+        else
+            echo "[SKIP] $sid already processed (use --force to reprocess)"
+            continue
+        fi
     fi
 
     # Build options from JSON config and consult prevalidated T2_INDEX
