@@ -179,6 +179,7 @@ if [[ $# -eq 0 ]]; then
   exit 1
 fi
 
+ORIG_ARGS=("$@")
 POS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -254,6 +255,13 @@ fi
 if [[ $NOHUP -eq 1 && -z "$BATCH_SIZE" ]]; then
   echo "[INFO] --nohup without --batch_size: defaulting to sequential (batch_size=1) to protect GPU memory"
   BATCH_SIZE=1
+fi
+
+if [[ $NOHUP -eq 1 && -z "${_BIDS_LONG_NOHUP_ACTIVE:-}" ]]; then
+  _log="${OUTPUT_DIR%/}/bids_long_$(date +%Y%m%d_%H%M%S).log"
+  _BIDS_LONG_NOHUP_ACTIVE=1 nohup bash "$0" "${ORIG_ARGS[@]}" > "$_log" 2>&1 &
+  echo "[INFO] Detached. PID: $!  Log: $_log"
+  exit 0
 fi
 
 if [[ -n "${RERUN_FILE}" ]]; then
