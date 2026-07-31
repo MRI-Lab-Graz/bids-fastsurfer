@@ -24,6 +24,7 @@ suppressPackageStartupMessages({
   library(optparse)
   library(lme4)
   library(lmerTest)
+  library(car)
 })
 
 option_list <- list(
@@ -83,8 +84,13 @@ if (!nrow(roi_dat)) stop("No rows matched --roi-set; check ROI names against the
 
 agg <- aggregate(as.formula(paste("volume ~ subject_id + session + hemisphere +", roi_col)), data=roi_dat, FUN=sum)
 names(agg)[names(agg) == roi_col] <- "subfield"
-etiv_lookup <- unique(tidy[, c("subject_id","etiv")])
-etiv_lookup <- etiv_lookup[!duplicated(etiv_lookup$subject_id), ]
+# eTIV varies slightly session-to-session (FreeSurfer re-estimation noise,
+# not real anatomical change) -- use each subject's BASELINE (earliest
+# session) eTIV as a fixed per-subject covariate, explicitly selected (not
+# relying on incidental row order) so it can't silently pick up a different
+# session's value.
+baseline_ses_for_etiv <- sort(unique(tidy$session))[1]
+etiv_lookup <- unique(tidy[tidy$session == baseline_ses_for_etiv, c("subject_id","etiv")])
 agg <- merge(agg, etiv_lookup, by="subject_id", all.x=TRUE)
 
 participants <- read.delim(opt$participants, header=TRUE, sep="\t", stringsAsFactors=FALSE)
@@ -112,9 +118,13 @@ print(table(intervention_participants$social, intervention_participants$duration
 agg <- merge(agg, intervention_participants[, c(required_pcols, "social", "duration")], by="subject_id")
 agg$social <- factor(agg$social, levels=c(opt$`social-label-a`, opt$`social-label-b`))
 agg$duration <- factor(agg$duration, levels=c(opt$`duration-label-a`, opt$`duration-label-b`))
-agg$hemisphere <- factor(agg$hemisphere, levels=c("lh","rh"))
+has_hemisphere <- length(unique(agg$hemisphere)) > 1
+agg$hemisphere <- factor(agg$hemisphere, levels=sort(unique(agg$hemisphere)))
 agg$sex <- factor(agg$sex)
-agg$age_z <- as.numeric(scale(agg$age))
+# Rank-transformed (not raw) age -- see 01_primary_lmm.R for rationale: this
+# cohort's age distribution has a sparse, unevenly-populated tail, and rank
+# transformation caps its leverage without discarding subjects.
+agg$age_z <- as.numeric(scale(rank(agg$age)))
 agg$etiv_z <- as.numeric(scale(agg$etiv))
 agg$log_volume <- log(agg$volume)
 
@@ -133,11 +143,33 @@ build_change_data <- function(d_roi) {
   merged
 }
 
-base_formula <- log_change ~ social * duration + log_baseline_z + hemisphere + followup_f + age_z + sex + etiv_z
+# With only one follow-up session (the 2-timepoint design), followup_f is a
+# constant and would be aliased with the intercept -- drop it rather than
+# feeding lmer a rank-deficient design. Same for hemisphere on midline-only
+# structures (e.g. brainstem), which have a single hemisphere level.
+followup_term <- if (length(followup_sessions) > 1) "followup_f + " else ""
+hemisphere_term <- if (has_hemisphere) "hemisphere + " else ""
+base_formula <- as.formula(paste("log_change ~ social * duration + log_baseline_z +", hemisphere_term, followup_term, "age_z + sex + etiv_z"))
 
 fit_term_p <- function(model, term) {
-  at <- tryCatch(anova(model), error=function(e) NULL)
+  if (inherits(model, "lm")) {
+    at <- tryCatch(as.data.frame(car::Anova(model, type=3)), error=function(e) NULL)
+  } else {
+    at <- tryCatch(anova(model), error=function(e) NULL)
+  }
   if (!is.null(at) && term %in% rownames(at)) at[term, "Pr(>F)"] else NA_real_
+}
+
+# Without a hemisphere split, midline-only structures (e.g. brainstem) give
+# exactly one row per subject in the change-score data -- a per-subject
+# random intercept is then unidentifiable (lme4 needs fewer grouping-factor
+# levels than observations), so fall back to plain lm() with Type III SS.
+fit_factorial_model <- function(d) {
+  if (has_hemisphere) {
+    tryCatch(lmerTest::lmer(update(base_formula, ". ~ . + (1 | subject_id)"), data=d, REML=TRUE), error=function(e) NULL)
+  } else {
+    tryCatch(lm(base_formula, data=d), error=function(e) NULL)
+  }
 }
 
 summary_rows <- list()
@@ -149,7 +181,7 @@ for (roi_name in unique(agg$subfield)) {
   change_dat <- build_change_data(d_roi)
   change_by_roi[[roi_name]] <- change_dat
 
-  model <- tryCatch(lmerTest::lmer(update(base_formula, ". ~ . + (1 | subject_id)"), data=change_dat, REML=TRUE), error=function(e) NULL)
+  model <- fit_factorial_model(change_dat)
   if (is.null(model)) next
 
   sink(file.path(opt$outdir, "models", paste0(roi_name, "_factorial_model.txt")))
@@ -187,7 +219,7 @@ loso_rows <- list()
 for (roi_name in names(change_by_roi)) {
   change_dat <- change_by_roi[[roi_name]]
   all_subjects <- unique(change_dat$subject_id)
-  full_model <- tryCatch(lmerTest::lmer(update(base_formula, ". ~ . + (1 | subject_id)"), data=change_dat, REML=TRUE), error=function(e) NULL)
+  full_model <- fit_factorial_model(change_dat)
   full_social_p <- if (!is.null(full_model)) fit_term_p(full_model, "social") else NA_real_
   full_duration_p <- if (!is.null(full_model)) fit_term_p(full_model, "duration") else NA_real_
   full_interaction_p <- if (!is.null(full_model)) fit_term_p(full_model, "social:duration") else NA_real_
@@ -195,7 +227,7 @@ for (roi_name in names(change_by_roi)) {
   for (excl_subj in all_subjects) {
     d_sub <- change_dat[change_dat$subject_id != excl_subj, , drop=FALSE]
     if (length(unique(d_sub$social)) < 2 || length(unique(d_sub$duration)) < 2) next
-    fit <- tryCatch(lmerTest::lmer(update(base_formula, ". ~ . + (1 | subject_id)"), data=d_sub, REML=TRUE), error=function(e) NULL)
+    fit <- fit_factorial_model(d_sub)
     if (is.null(fit)) next
     loso_rows[[length(loso_rows) + 1]] <- data.frame(
       roi = roi_name, excluded_subject = excl_subj,

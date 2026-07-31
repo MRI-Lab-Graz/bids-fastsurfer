@@ -99,6 +99,14 @@ names(base_vol)[3] <- "baseline_volume"; names(final_vol)[3] <- "final_volume"
 brain_change <- merge(base_vol, final_vol, by=c("subject_id","roi"))
 brain_change$brain_change <- log(brain_change$final_volume) - log(brain_change$baseline_volume)
 
+# eTIV varies slightly session-to-session (FreeSurfer re-estimation noise,
+# not real anatomical change) -- use each subject's BASELINE (earliest
+# session) eTIV as a fixed per-subject covariate. (This was previously
+# documented in the module docstring above but never actually wired into
+# the model formulas below -- fixed here.)
+etiv_lookup <- unique(tidy[tidy$session == baseline_ses, c("subject_id","etiv")])
+brain_change <- merge(brain_change, etiv_lookup, by="subject_id", all.x=TRUE)
+
 # ------------------------------------------------------------------------
 # Load longitudinal moderators, compute per-subject change score for each
 # candidate psychological measure over the SAME window
@@ -129,7 +137,11 @@ dat <- merge(dat, mod_change[, c("subject_id", paste0(moderator_cols, "_change")
 dat <- dat[dat$group %in% c(dance_groups, control_group), , drop=FALSE]
 dat$dance <- factor(ifelse(dat$group %in% dance_groups, "dance", "control"), levels=c("control","dance"))
 dat$sex <- factor(dat$sex)
-dat$age_z <- as.numeric(scale(dat$age))
+# Rank-transformed (not raw) age -- see 01_primary_lmm.R for rationale: this
+# cohort's age distribution has a sparse, unevenly-populated tail, and rank
+# transformation caps its leverage without discarding subjects.
+dat$age_z <- as.numeric(scale(rank(dat$age)))
+dat$etiv_z <- as.numeric(scale(dat$etiv))
 
 msg("Subjects with brain-change + participant data: %d\n", length(unique(dat$subject_id)))
 
@@ -137,7 +149,7 @@ msg("Subjects with brain-change + participant data: %d\n", length(unique(dat$sub
 # Per-ROI x moderator tests
 # ------------------------------------------------------------------------
 fit_overall <- function(d, mod_change_col) {
-  f <- as.formula(paste("brain_change ~", mod_change_col, "+ age_z + sex"))
+  f <- as.formula(paste("brain_change ~", mod_change_col, "+ age_z + sex + etiv_z"))
   fit <- tryCatch(lm(f, data=d), error=function(e) NULL)
   if (is.null(fit)) return(c(NA_real_, NA_real_))
   s <- summary(fit)$coefficients
@@ -146,7 +158,7 @@ fit_overall <- function(d, mod_change_col) {
 }
 
 fit_interaction <- function(d, mod_change_col) {
-  f <- as.formula(paste("brain_change ~", mod_change_col, "* dance + age_z + sex"))
+  f <- as.formula(paste("brain_change ~", mod_change_col, "* dance + age_z + sex + etiv_z"))
   fit <- tryCatch(lm(f, data=d), error=function(e) NULL)
   if (is.null(fit)) return(NA_real_)
   s <- summary(fit)$coefficients

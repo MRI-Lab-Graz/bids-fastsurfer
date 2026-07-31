@@ -1,18 +1,18 @@
 #!/usr/bin/env Rscript
 #
-# Baseline-corrected (ANCOVA-on-change-scores) analysis: does the dance
+# Baseline-corrected (ANCOVA-on-change-scores) analysis: does the
 # intervention change hippocampal subfield volume MORE than control, once
 # any pre-existing baseline group difference is explicitly removed?
 #
-# 01_primary_lmm.R's dance:time_f interaction term already implicitly tests
-# this (it's the deviation from the baseline group gap), but its emmeans
-# output reports the MARGINAL group difference at each timepoint, which
-# still includes the baseline offset and is easy to misread as "the
+# 01_primary_lmm.R's intervention:time_f interaction term already implicitly
+# tests this (it's the deviation from the baseline group gap), but its
+# emmeans output reports the MARGINAL group difference at each timepoint,
+# which still includes the baseline offset and is easy to misread as "the
 # intervention worked" when it's actually a static pre-existing gap.
 #
 # This script makes the correction explicit: change score (log(follow-up) -
 # log(baseline)) is the outcome, baseline volume is a covariate (ANCOVA),
-# and `dance` now directly tests "extra change beyond what baseline
+# and `intervention` now directly tests "extra change beyond what baseline
 # differences would predict" (Van Breukelen & van den Brand 2006 -- ANCOVA
 # on change scores is more powerful than raw repeated-measures analysis when
 # there's baseline imbalance, exactly the situation found in this dataset).
@@ -34,8 +34,8 @@ option_list <- list(
   make_option(c("--roi-set"), type="character",
               default="Whole_hippocampus,GC-ML-DG,CA1,CA3,CA4,subiculum,molecular_layer_HP",
               help="Comma-separated pre-specified subfield names [default %default]"),
-  make_option(c("--dance-groups"), type="character", default="ballet,contemporary",
-              help="Comma-separated group values pooled into the 'dance' contrast [default %default]"),
+  make_option(c("--intervention-groups"), type="character", default="ballet,contemporary",
+              help="Comma-separated group values pooled into the 'intervention' contrast [default %default]"),
   make_option(c("--control-group"), type="character", default="control",
               help="Group value treated as control [default %default]"),
   make_option(c("--baseline-session"), type="character", default=NULL,
@@ -55,7 +55,7 @@ dir.create(opt$outdir, showWarnings=FALSE, recursive=TRUE)
 dir.create(file.path(opt$outdir, "models"), showWarnings=FALSE, recursive=TRUE)
 
 roi_set <- trimws(strsplit(opt$`roi-set`, ",")[[1]])
-dance_groups <- trimws(strsplit(opt$`dance-groups`, ",")[[1]])
+intervention_groups <- trimws(strsplit(opt$`intervention-groups`, ",")[[1]])
 control_group <- trimws(opt$`control-group`)
 
 # ------------------------------------------------------------------------
@@ -69,8 +69,13 @@ roi_dat <- tidy[tidy$subfield %in% roi_set, , drop=FALSE]
 if (!nrow(roi_dat)) stop("No rows matched --roi-set; check subfield names against the tidy file")
 
 agg <- aggregate(volume ~ subject_id + session + hemisphere + subfield, data=roi_dat, FUN=sum)
-etiv_lookup <- unique(tidy[, c("subject_id","etiv")])
-etiv_lookup <- etiv_lookup[!duplicated(etiv_lookup$subject_id), ]
+# eTIV varies slightly session-to-session (FreeSurfer re-estimation noise,
+# not real anatomical change) -- use each subject's BASELINE (earliest
+# session) eTIV as a fixed per-subject covariate, explicitly selected (not
+# relying on incidental row order) so it can't silently pick up a different
+# session's value.
+baseline_ses_for_etiv <- sort(unique(tidy$session))[1]
+etiv_lookup <- unique(tidy[tidy$session == baseline_ses_for_etiv, c("subject_id","etiv")])
 agg <- merge(agg, etiv_lookup, by="subject_id", all.x=TRUE)
 
 participants <- read.delim(opt$participants, header=TRUE, sep="\t", stringsAsFactors=FALSE)
@@ -79,8 +84,8 @@ missing_pcols <- setdiff(required_pcols, names(participants))
 if (length(missing_pcols)) stop(sprintf("participants file missing required columns: %s", paste(missing_pcols, collapse=", ")))
 
 agg <- merge(agg, participants[, required_pcols], by="subject_id")
-agg <- agg[agg$group %in% c(dance_groups, control_group), , drop=FALSE]
-agg$dance <- factor(ifelse(agg$group %in% dance_groups, "dance", "control"), levels=c("control","dance"))
+agg <- agg[agg$group %in% c(intervention_groups, control_group), , drop=FALSE]
+agg$intervention <- factor(ifelse(agg$group %in% intervention_groups, "intervention", "control"), levels=c("control","intervention"))
 agg$hemisphere <- factor(agg$hemisphere, levels=c("lh","rh"))
 agg$sex <- factor(agg$sex)
 agg$age_z <- as.numeric(scale(agg$age))
@@ -108,7 +113,15 @@ build_change_data <- function(d_roi) {
   merged
 }
 
-base_formula <- log_change ~ dance * followup_f + log_baseline_z + hemisphere + age_z + sex + etiv_z
+# With only one follow-up session (the 2-timepoint design), followup_f is a
+# constant and the intervention:followup_f / followup_f terms would be
+# aliased with the intercept -- drop them rather than feeding lmer a
+# rank-deficient design.
+base_formula <- if (length(followup_sessions) > 1) {
+  log_change ~ intervention * followup_f + log_baseline_z + hemisphere + age_z + sex + etiv_z
+} else {
+  log_change ~ intervention + log_baseline_z + hemisphere + age_z + sex + etiv_z
+}
 
 fit_one_roi <- function(d, roi_name) {
   fit_re <- function(re_formula) {
@@ -140,37 +153,37 @@ for (roi_name in unique(agg$subfield)) {
   sink()
 
   anova_tab <- tryCatch(anova(model), error=function(e) NULL)
-  dance_row <- if (!is.null(anova_tab) && "dance" %in% rownames(anova_tab)) anova_tab["dance", ] else NULL
-  interaction_row <- if (!is.null(anova_tab) && "dance:followup_f" %in% rownames(anova_tab)) anova_tab["dance:followup_f", ] else NULL
+  intervention_row <- if (!is.null(anova_tab) && "intervention" %in% rownames(anova_tab)) anova_tab["intervention", ] else NULL
+  interaction_row <- if (!is.null(anova_tab) && "intervention:followup_f" %in% rownames(anova_tab)) anova_tab["intervention:followup_f", ] else NULL
 
-  em <- tryCatch(emmeans(model, ~ dance | followup_f), error=function(e) NULL)
-  dance_contrasts <- if (!is.null(em)) as.data.frame(contrast(em, method="revpairwise")) else NULL
-  if (!is.null(dance_contrasts)) {
-    write.csv(dance_contrasts, file.path(opt$outdir, "models", paste0(roi_name, "_change_dance_vs_control_by_followup.csv")), row.names=FALSE)
+  em <- tryCatch(emmeans(model, ~ intervention | followup_f), error=function(e) NULL)
+  intervention_contrasts <- if (!is.null(em)) as.data.frame(contrast(em, method="revpairwise")) else NULL
+  if (!is.null(intervention_contrasts)) {
+    write.csv(intervention_contrasts, file.path(opt$outdir, "models", paste0(roi_name, "_change_intervention_vs_control_by_followup.csv")), row.names=FALSE)
   }
 
   summary_rows[[roi_name]] <- data.frame(
     roi = roi_name,
     n_obs = nrow(change_dat),
     n_subjects = length(unique(change_dat$subject_id)),
-    dance_main_F = if (!is.null(dance_row)) dance_row[["F value"]] else NA_real_,
-    dance_main_p = if (!is.null(dance_row)) dance_row[["Pr(>F)"]] else NA_real_,
-    dance_x_followup_F = if (!is.null(interaction_row)) interaction_row[["F value"]] else NA_real_,
-    dance_x_followup_p = if (!is.null(interaction_row)) interaction_row[["Pr(>F)"]] else NA_real_,
+    intervention_main_F = if (!is.null(intervention_row)) intervention_row[["F value"]] else NA_real_,
+    intervention_main_p = if (!is.null(intervention_row)) intervention_row[["Pr(>F)"]] else NA_real_,
+    intervention_x_followup_F = if (!is.null(interaction_row)) interaction_row[["F value"]] else NA_real_,
+    intervention_x_followup_p = if (!is.null(interaction_row)) interaction_row[["Pr(>F)"]] else NA_real_,
     stringsAsFactors = FALSE
   )
 }
 
 summary_df <- do.call(rbind, summary_rows)
 if (!is.null(summary_df) && nrow(summary_df)) {
-  summary_df$dance_main_p_fdr <- p.adjust(summary_df$dance_main_p, method="fdr")
-  summary_df$dance_x_followup_p_fdr <- p.adjust(summary_df$dance_x_followup_p, method="fdr")
-  summary_df$significant_dance_main <- summary_df$dance_main_p_fdr < opt$alpha
-  summary_df$significant_dance_x_followup <- summary_df$dance_x_followup_p_fdr < opt$alpha
-  summary_df <- summary_df[order(summary_df$dance_main_p_fdr), ]
+  summary_df$intervention_main_p_fdr <- p.adjust(summary_df$intervention_main_p, method="fdr")
+  summary_df$intervention_x_followup_p_fdr <- p.adjust(summary_df$intervention_x_followup_p, method="fdr")
+  summary_df$significant_intervention_main <- summary_df$intervention_main_p_fdr < opt$alpha
+  summary_df$significant_intervention_x_followup <- summary_df$intervention_x_followup_p_fdr < opt$alpha
+  summary_df <- summary_df[order(summary_df$intervention_main_p_fdr), ]
   write.csv(summary_df, file.path(opt$outdir, "baseline_corrected_summary.csv"), row.names=FALSE)
   msg("\nWrote combined summary (FDR-corrected across %d ROIs) to baseline_corrected_summary.csv\n", nrow(summary_df))
-  msg("\nInterpretation:\n- 'dance_main' tests whether dance shows MORE change than control, baseline-corrected (this is the clean intervention-effect test).\n- 'dance_x_followup' tests whether that extra change differs between the two follow-up sessions (i.e. still accumulating vs already plateaued).\n")
+  msg("\nInterpretation:\n- 'intervention_main' tests whether the intervention shows MORE change than control, baseline-corrected (this is the clean intervention-effect test).\n- 'intervention_x_followup' tests whether that extra change differs between the two follow-up sessions (i.e. still accumulating vs already plateaued).\n")
 } else {
   warning("No ROI change-score models were successfully fit; no summary written")
 }

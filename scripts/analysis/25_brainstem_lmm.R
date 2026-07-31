@@ -1,15 +1,21 @@
 #!/usr/bin/env Rscript
 #
-# Amygdala nucleus analysis: same confirmatory LMM design as
-# 01_primary_lmm.R, applied to amygdala nuclei (from extract_amygdala_subfields.py
-# -- the "hippo-amygdala" segmentation run produces these for free alongside
-# the hippocampal subfields).
+# Brainstem substructure analysis: same confirmatory LMM design as
+# 01_primary_lmm.R / 10_amygdala_lmm.R / 24_thalamic_lmm.R, applied to
+# brainstem substructures (from FreeSurfer 8.2.0's
+# `segment_subregions brainstem --long-base`).
 #
-# No pre-registered a priori nucleus subset exists for this ROI set, so all
-# nuclei are tested (FDR-corrected across them), with Whole_amygdala reported
-# separately as the summary measure analogous to Whole_hippocampus.
+# Unlike hippocampus/amygdala/thalamus, brainstem substructures are midline
+# (single "midline" pseudo-hemisphere per FreeSurfer's own labeling, not
+# lateralized lh/rh) -- so, unlike the sibling scripts, there is no
+# `hemisphere` covariate here; there is exactly one row per subject/session/
+# structure, not two.
 #
-#   log(volume) ~ intervention * time_f + hemisphere + age_z + sex + etiv_z
+# All 4 substructures (Medulla, Pons, Midbrain, SCP) plus Whole_brainstem
+# are tested (FDR-corrected across them); no pre-registered a priori subset
+# exists for this ROI set.
+#
+#   log(volume) ~ intervention * time_f + age_z + sex + etiv_z
 #                 + (1 + time_numeric | subject_id)
 # with fallback to (1 | subject_id) if singular.
 
@@ -22,10 +28,10 @@ suppressPackageStartupMessages({
 
 option_list <- list(
   make_option(c("-t", "--tidy"), type="character",
-              help="Path to amygdala_tidy.tsv (from extract_amygdala_subfields.py)"),
+              help="Path to brainstem_tidy.tsv (structure, hemisphere='midline', volume, etiv columns)"),
   make_option(c("-p", "--participants"), type="character",
               help="Path to participants TSV with columns: subject_id, group, age, sex"),
-  make_option(c("-o", "--outdir"), type="character", default="results/10_amygdala_lmm",
+  make_option(c("-o", "--outdir"), type="character", default="results/25_brainstem_lmm",
               help="Output directory [default %default]"),
   make_option(c("--intervention-groups"), type="character", default="ballet,contemporary",
               help="Comma-separated group values pooled into the 'intervention' contrast [default %default]"),
@@ -52,7 +58,7 @@ dir.create(file.path(opt$outdir, "models"), showWarnings=FALSE, recursive=TRUE)
 intervention_groups <- trimws(strsplit(opt$`intervention-groups`, ",")[[1]])
 control_group <- trimws(opt$`control-group`)
 
-msg("Loading tidy amygdala data from %s...\n", opt$tidy)
+msg("Loading tidy brainstem data from %s...\n", opt$tidy)
 tidy <- read.delim(opt$tidy, header=TRUE, sep="\t", stringsAsFactors=FALSE)
 tidy$volume <- suppressWarnings(as.numeric(tidy$volume))
 tidy$is_composite <- as.logical(tidy$is_composite)
@@ -75,7 +81,6 @@ agg <- agg[agg$group %in% c(intervention_groups, control_group), , drop=FALSE]
 agg$time_numeric <- as.numeric(factor(agg$session, levels=sort(unique(agg$session)))) - 1
 agg$time_f <- factor(agg$session, levels=sort(unique(agg$session)))
 agg$intervention <- factor(ifelse(agg$group %in% intervention_groups, "intervention", "control"), levels=c("control","intervention"))
-agg$hemisphere <- factor(agg$hemisphere, levels=c("lh","rh"))
 agg$sex <- factor(agg$sex)
 # Rank-transformed (not raw) age -- see 01_primary_lmm.R for rationale: this
 # cohort's age distribution has a sparse, unevenly-populated tail, and rank
@@ -99,9 +104,9 @@ if (!is.null(opt$moderators)) {
 }
 
 n_subjects <- length(unique(agg$subject_id))
-msg("Modelling data: %d rows, %d subjects, %d nuclei\n", nrow(agg), n_subjects, length(unique(agg$nucleus)))
+msg("Modelling data: %d rows, %d subjects, %d structures\n", nrow(agg), n_subjects, length(unique(agg$structure)))
 
-base_formula <- log_volume ~ intervention * time_f + hemisphere + age_z + sex + etiv_z
+base_formula <- log_volume ~ intervention * time_f + age_z + sex + etiv_z
 if (!is.null(opt$moderators)) base_formula <- update(base_formula, . ~ . + cesd_z)
 
 fit_one_roi <- function(d, roi_name) {
@@ -116,22 +121,22 @@ fit_one_roi <- function(d, roi_name) {
     re_structure <- "random_intercept_only"
   }
   if (is.null(model)) {
-    warning(sprintf("Could not fit any model for nucleus '%s'", roi_name))
+    warning(sprintf("Could not fit any model for structure '%s'", roi_name))
     return(NULL)
   }
   list(model=model, re_structure=re_structure)
 }
 
 summary_rows <- list()
-for (roi_name in unique(agg$nucleus)) {
-  msg("Fitting model for nucleus: %s\n", roi_name)
-  d_roi <- agg[agg$nucleus == roi_name, , drop=FALSE]
+for (roi_name in unique(agg$structure)) {
+  msg("Fitting model for structure: %s\n", roi_name)
+  d_roi <- agg[agg$structure == roi_name, , drop=FALSE]
   fit_out <- fit_one_roi(d_roi, roi_name)
   if (is.null(fit_out)) next
   model <- fit_out$model
 
   sink(file.path(opt$outdir, "models", paste0(roi_name, "_model.txt")))
-  cat("Nucleus:", roi_name, "-- Random-effects structure:", fit_out$re_structure, "\n\n")
+  cat("Structure:", roi_name, "-- Random-effects structure:", fit_out$re_structure, "\n\n")
   print(summary(model))
   sink()
 
@@ -166,8 +171,8 @@ if (!is.null(summary_df) && nrow(summary_df)) {
   summary_df$significant_interaction <- summary_df$interaction_p_fdr < opt$alpha
   summary_df$significant_intervention_effect <- summary_df$intervention_effect_last_timepoint_p_fdr < opt$alpha
   summary_df <- summary_df[order(summary_df$interaction_p_fdr), ]
-  write.csv(summary_df, file.path(opt$outdir, "amygdala_summary.csv"), row.names=FALSE)
-  msg("\nWrote combined summary (FDR-corrected across %d nuclei) to amygdala_summary.csv\n", nrow(summary_df))
+  write.csv(summary_df, file.path(opt$outdir, "brainstem_summary.csv"), row.names=FALSE)
+  msg("\nWrote combined summary (FDR-corrected across %d structures) to brainstem_summary.csv\n", nrow(summary_df))
 } else {
-  warning("No nucleus models were successfully fit; no summary written")
+  warning("No structure models were successfully fit; no summary written")
 }

@@ -24,6 +24,7 @@ suppressPackageStartupMessages({
   library(optparse)
   library(lme4)
   library(lmerTest)
+  library(car)
 })
 
 option_list <- list(
@@ -42,7 +43,7 @@ option_list <- list(
               help="Comma-separated pre-specified ROI names [default %default]"),
   make_option(c("--roi-column"), type="character", default="subfield",
               help="Column name identifying the ROI in the tidy file (subfield/nucleus/roi) [default %default]"),
-  make_option(c("--dance-groups"), type="character", default="ballet,contemporary",
+  make_option(c("--intervention-groups"), type="character", default="ballet,contemporary",
               help="Comma-separated group values pooled into the intervention contrast [default %default]"),
   make_option(c("--control-group"), type="character", default="control",
               help="Group value treated as control [default %default]"),
@@ -64,7 +65,7 @@ if (!file.exists(opt$participants)) stop(sprintf("participants file not found: %
 dir.create(opt$outdir, showWarnings=FALSE, recursive=TRUE)
 
 roi_set <- trimws(strsplit(opt$`roi-set`, ",")[[1]])
-dance_groups <- trimws(strsplit(opt$`dance-groups`, ",")[[1]])
+intervention_groups <- trimws(strsplit(opt$`intervention-groups`, ",")[[1]])
 control_group <- trimws(opt$`control-group`)
 roi_col <- opt$`roi-column`
 
@@ -81,8 +82,13 @@ if (!nrow(roi_dat)) stop("No rows matched --roi-set; check ROI names against the
 
 agg <- aggregate(as.formula(paste("volume ~ subject_id + session + hemisphere +", roi_col)), data=roi_dat, FUN=sum)
 names(agg)[names(agg) == roi_col] <- "subfield"
-etiv_lookup <- unique(tidy[, c("subject_id","etiv")])
-etiv_lookup <- etiv_lookup[!duplicated(etiv_lookup$subject_id), ]
+# eTIV varies slightly session-to-session (FreeSurfer re-estimation noise,
+# not real anatomical change) -- use each subject's BASELINE (earliest
+# session) eTIV as a fixed per-subject covariate, explicitly selected (not
+# relying on incidental row order) so it can't silently pick up a different
+# session's value.
+baseline_ses_for_etiv <- sort(unique(tidy$session))[1]
+etiv_lookup <- unique(tidy[tidy$session == baseline_ses_for_etiv, c("subject_id","etiv")])
 agg <- merge(agg, etiv_lookup, by="subject_id", all.x=TRUE)
 
 participants <- read.delim(opt$participants, header=TRUE, sep="\t", stringsAsFactors=FALSE)
@@ -104,10 +110,15 @@ if (!is.null(opt$moderators)) {
 }
 
 agg <- merge(agg, meta, by="subject_id")
-agg <- agg[agg$group %in% c(dance_groups, control_group), , drop=FALSE]
-agg$dance <- factor(ifelse(agg$group %in% dance_groups, "dance", "control"), levels=c("control","dance"))
-agg$hemisphere <- factor(agg$hemisphere, levels=c("lh","rh"))
-agg$age_z <- as.numeric(scale(agg$age))
+agg <- agg[agg$group %in% c(intervention_groups, control_group), , drop=FALSE]
+agg$intervention <- factor(ifelse(agg$group %in% intervention_groups, "intervention", "control"), levels=c("control","intervention"))
+has_hemisphere <- length(unique(agg$hemisphere)) > 1
+agg$hemisphere <- factor(agg$hemisphere, levels=sort(unique(agg$hemisphere)))
+# Rank-transformed (not raw) age -- see 01_primary_lmm.R for rationale: this
+# cohort's age distribution has a sparse, unevenly-populated tail, and rank
+# transformation caps its leverage without discarding subjects. Used both as
+# a covariate and (via moderator_specs below) as the "age" moderator itself.
+agg$age_z <- as.numeric(scale(rank(agg$age)))
 agg$etiv_z <- as.numeric(scale(agg$etiv))
 agg$log_volume <- log(agg$volume)
 agg$sex_mf <- ifelse(agg$sex %in% c("M","F"), agg$sex, NA)
@@ -134,7 +145,7 @@ build_change_data <- function(d_roi) {
 
 # ------------------------------------------------------------------------
 # Candidate moderators: base covariates always adjusted for; moderator adds
-# a dance x moderator interaction term on top.
+# an intervention x moderator interaction term on top.
 # ------------------------------------------------------------------------
 moderator_specs <- list(
   age = list(term = "age_z", label = "Age"),
@@ -151,12 +162,29 @@ base_covariate_terms <- c("age_z", "sex_mf")
 fit_moderator_model <- function(change_dat, mod_term) {
   adjust_terms <- setdiff(base_covariate_terms, mod_term)
   adjust_str <- paste(adjust_terms, collapse=" + ")
-  f_str <- paste0("log_change ~ dance * ", mod_term, " + log_baseline_z + hemisphere + followup_f + ",
-                   adjust_str, " + etiv_z + (1 | subject_id)")
-  fit <- tryCatch(lmerTest::lmer(as.formula(f_str), data=change_dat, REML=TRUE), error=function(e) NULL)
-  if (is.null(fit)) return(NA_real_)
-  at <- tryCatch(anova(fit), error=function(e) NULL)
-  interaction_term <- paste0("dance:", mod_term)
+  # With only one follow-up session (the 2-timepoint design), followup_f is a
+  # constant and would be aliased with the intercept -- drop it rather than
+  # feeding lmer a rank-deficient design. Same for hemisphere on midline-only
+  # structures (e.g. brainstem), which have a single hemisphere level -- and
+  # without a hemisphere split, the change-score data has exactly one row per
+  # subject, so a per-subject random intercept is unidentifiable (lme4 needs
+  # fewer grouping-factor levels than observations); fall back to plain lm()
+  # with Type III SS via car::Anova in that case.
+  followup_term <- if (nlevels(change_dat$followup_f) > 1) "followup_f + " else ""
+  hemisphere_term <- if (has_hemisphere) "hemisphere + " else ""
+  re_term <- if (has_hemisphere) " + (1 | subject_id)" else ""
+  f_str <- paste0("log_change ~ intervention * ", mod_term, " + log_baseline_z + ", hemisphere_term, followup_term,
+                   adjust_str, " + etiv_z", re_term)
+  interaction_term <- paste0("intervention:", mod_term)
+  if (has_hemisphere) {
+    fit <- tryCatch(lmerTest::lmer(as.formula(f_str), data=change_dat, REML=TRUE), error=function(e) NULL)
+    if (is.null(fit)) return(NA_real_)
+    at <- tryCatch(anova(fit), error=function(e) NULL)
+  } else {
+    fit <- tryCatch(lm(as.formula(f_str), data=change_dat), error=function(e) NULL)
+    if (is.null(fit)) return(NA_real_)
+    at <- tryCatch(as.data.frame(car::Anova(fit, type=3)), error=function(e) NULL)
+  }
   if (!is.null(at) && interaction_term %in% rownames(at)) at[interaction_term, "Pr(>F)"] else NA_real_
 }
 
@@ -173,7 +201,7 @@ for (mod_name in names(moderator_specs)) {
     change_dat <- build_change_data(d_roi)
     change_dat <- change_dat[!is.na(change_dat[[mod_term]]), , drop=FALSE]
     change_by_roi[[roi_name]] <- change_dat  # cache for LOSO (moderator-independent columns only used per-call)
-    if (!nrow(change_dat) || length(unique(change_dat$dance)) < 2) next
+    if (!nrow(change_dat) || length(unique(change_dat$intervention)) < 2) next
 
     p_val <- fit_moderator_model(change_dat, mod_term)
     mod_rows[[roi_name]] <- data.frame(
@@ -189,7 +217,7 @@ for (mod_name in names(moderator_specs)) {
     for (i in seq_len(nrow(mod_df))) {
       row <- mod_df[i, ]
       msg("  %s: p = %.3f, p_fdr = %.3f%s\n", row$roi, row$interaction_p, row$interaction_p_fdr,
-          if (row$significant) " *" else "")
+          if (isTRUE(row$significant)) " *" else "")
     }
   }
 }
@@ -216,7 +244,7 @@ if (!is.null(screen_hits) && nrow(screen_hits)) {
 
     for (excl_subj in unique(change_dat$subject_id)) {
       d_sub <- change_dat[change_dat$subject_id != excl_subj, , drop=FALSE]
-      if (length(unique(d_sub$dance)) < 2) next
+      if (length(unique(d_sub$intervention)) < 2) next
       p_val <- fit_moderator_model(d_sub, mod_term)
       loso_rows[[length(loso_rows) + 1]] <- data.frame(
         moderator = mod_name, roi = roi_name, excluded_subject = excl_subj,
@@ -255,7 +283,7 @@ if (!is.null(combined)) {
   cat(sprintf("Significant after FDR correction: %d\n\n", n_sig), file=con)
   if (n_sig > 0) {
     cat("Significant hits (check loso_summary.txt for robustness before trusting these):\n", file=con)
-    sig_rows <- combined[combined$significant, ]
+    sig_rows <- combined[which(combined$significant), ]
     for (i in seq_len(nrow(sig_rows))) {
       row <- sig_rows[i, ]
       cat(sprintf("  - %s moderator on %s: p_fdr = %.4f\n", row$moderator, row$roi, row$interaction_p_fdr), file=con)

@@ -63,8 +63,13 @@ if (!nrow(roi_dat)) stop("No rows matched --roi-set")
 
 agg <- aggregate(as.formula(paste("volume ~ subject_id + session + hemisphere +", roi_col)), data=roi_dat, FUN=sum)
 names(agg)[names(agg) == roi_col] <- "subfield"
-etiv_lookup <- unique(tidy[, c("subject_id","etiv")])
-etiv_lookup <- etiv_lookup[!duplicated(etiv_lookup$subject_id), ]
+# eTIV varies slightly session-to-session (FreeSurfer re-estimation noise,
+# not real anatomical change) -- use each subject's BASELINE (earliest
+# session) eTIV as a fixed per-subject covariate, explicitly selected (not
+# relying on incidental row order) so it can't silently pick up a different
+# session's value.
+baseline_ses_for_etiv <- sort(unique(tidy$session))[1]
+etiv_lookup <- unique(tidy[tidy$session == baseline_ses_for_etiv, c("subject_id","etiv")])
 agg <- merge(agg, etiv_lookup, by="subject_id", all.x=TRUE)
 
 participants <- read.delim(opt$participants, header=TRUE, sep="\t", stringsAsFactors=FALSE)

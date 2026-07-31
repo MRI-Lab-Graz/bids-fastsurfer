@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 #
-# Multivariate pattern analysis: does dance vs control differ in the JOINT
+# Multivariate pattern analysis: does the intervention vs control differ in the JOINT
 # pattern of change across the pre-specified ROI set, even if no single ROI
 # survives per-ROI FDR correction?
 #
@@ -40,8 +40,8 @@ option_list <- list(
   make_option(c("--roi-set"), type="character",
               default="Whole_hippocampus,GC-ML-DG,CA1,CA3,CA4,subiculum,molecular_layer_HP",
               help="Comma-separated pre-specified subfield names [default %default]"),
-  make_option(c("--dance-groups"), type="character", default="ballet,contemporary",
-              help="Comma-separated group values pooled into the 'dance' contrast [default %default]"),
+  make_option(c("--intervention-groups"), type="character", default="ballet,contemporary",
+              help="Comma-separated group values pooled into the 'intervention' contrast [default %default]"),
   make_option(c("--control-group"), type="character", default="control",
               help="Group value treated as control [default %default]"),
   make_option(c("--baseline-session"), type="character", default=NULL,
@@ -64,7 +64,7 @@ if (!file.exists(opt$participants)) stop(sprintf("participants file not found: %
 dir.create(opt$outdir, showWarnings=FALSE, recursive=TRUE)
 
 roi_set <- trimws(strsplit(opt$`roi-set`, ",")[[1]])
-dance_groups <- trimws(strsplit(opt$`dance-groups`, ",")[[1]])
+intervention_groups <- trimws(strsplit(opt$`intervention-groups`, ",")[[1]])
 control_group <- trimws(opt$`control-group`)
 
 # ------------------------------------------------------------------------
@@ -111,33 +111,33 @@ missing_pcols <- setdiff(required_pcols, names(participants))
 if (length(missing_pcols)) stop(sprintf("participants file missing required columns: %s", paste(missing_pcols, collapse=", ")))
 
 dat <- merge(change_wide, participants[, required_pcols], by="subject_id")
-dat <- dat[dat$group %in% c(dance_groups, control_group), , drop=FALSE]
-dat$dance <- factor(ifelse(dat$group %in% dance_groups, "dance", "control"), levels=c("control","dance"))
+dat <- dat[dat$group %in% c(intervention_groups, control_group), , drop=FALSE]
+dat$intervention <- factor(ifelse(dat$group %in% intervention_groups, "intervention", "control"), levels=c("control","intervention"))
 dat$sex <- factor(dat$sex)
 dat$age_z <- as.numeric(scale(dat$age))
 
 n_before <- nrow(dat)
-dat <- dat[complete.cases(dat[, c(change_cols, "dance","age_z","sex")]), , drop=FALSE]
+dat <- dat[complete.cases(dat[, c(change_cols, "intervention","age_z","sex")]), , drop=FALSE]
 msg("Subjects with complete baseline+final data across all %d ROIs: %d of %d\n", length(change_cols), nrow(dat), n_before)
 if (nrow(dat) < length(change_cols) + 10) {
   warning(sprintf("Only %d complete subjects for %d ROI features -- MANOVA/PCA results at this ratio should be treated cautiously", nrow(dat), length(change_cols)))
 }
 
-write.csv(dat[, c("subject_id","dance",change_cols)], file.path(opt$outdir, "change_score_matrix.csv"), row.names=FALSE)
+write.csv(dat[, c("subject_id","intervention",change_cols)], file.path(opt$outdir, "change_score_matrix.csv"), row.names=FALSE)
 
 # ------------------------------------------------------------------------
 # 1. MANOVA: joint test of the ROI-change pattern by group
 # ------------------------------------------------------------------------
 msg("Running MANOVA on joint ROI-change pattern...\n")
 Y <- as.matrix(dat[, change_cols])
-manova_fit <- manova(Y ~ dance + age_z + sex, data=dat)
+manova_fit <- manova(Y ~ intervention + age_z + sex, data=dat)
 manova_summary <- as.data.frame(summary(manova_fit, test="Pillai")$stats)
 manova_summary$term <- rownames(manova_summary)
 write.csv(manova_summary, file.path(opt$outdir, "manova_results.csv"), row.names=FALSE)
 
-dance_manova_p <- manova_summary[manova_summary$term == "dance", "Pr(>F)"]
-msg("MANOVA (Pillai's trace) for 'dance' across %d ROIs jointly: p = %s\n",
-    length(change_cols), if(length(dance_manova_p)) format(dance_manova_p, digits=4) else "NA")
+intervention_manova_p <- manova_summary[manova_summary$term == "intervention", "Pr(>F)"]
+msg("MANOVA (Pillai's trace) for 'intervention' across %d ROIs jointly: p = %s\n",
+    length(change_cols), if(length(intervention_manova_p)) format(intervention_manova_p, digits=4) else "NA")
 
 # ------------------------------------------------------------------------
 # 2. PCA on covariate-residualized change scores
@@ -161,24 +161,24 @@ write.csv(data.frame(component=paste0("PC", seq_along(var_explained)), variance_
           file.path(opt$outdir, "pca_variance_explained.csv"), row.names=FALSE)
 
 pc_scores <- as.data.frame(pca_fit$x[, seq_len(n_keep), drop=FALSE])
-pc_scores$dance <- dat$dance
+pc_scores$intervention <- dat$intervention
 
 pc_test_rows <- list()
 for (i in seq_len(n_keep)) {
   pc_name <- paste0("PC", i)
-  fit <- lm(pc_scores[[pc_name]] ~ dance, data=pc_scores)
+  fit <- lm(pc_scores[[pc_name]] ~ intervention, data=pc_scores)
   tt <- summary(fit)$coefficients
   pc_test_rows[[pc_name]] <- data.frame(
     component = pc_name,
     variance_explained = var_explained[i],
-    dance_estimate = if ("dancedance" %in% rownames(tt)) tt["dancedance", "Estimate"] else NA_real_,
-    dance_p = if ("dancedance" %in% rownames(tt)) tt["dancedance", "Pr(>|t|)"] else NA_real_,
+    intervention_estimate = if ("interventionintervention" %in% rownames(tt)) tt["interventionintervention", "Estimate"] else NA_real_,
+    intervention_p = if ("interventionintervention" %in% rownames(tt)) tt["interventionintervention", "Pr(>|t|)"] else NA_real_,
     stringsAsFactors = FALSE
   )
 }
 pc_test_df <- do.call(rbind, pc_test_rows)
-pc_test_df$dance_p_fdr <- p.adjust(pc_test_df$dance_p, method="fdr")
-pc_test_df$significant <- pc_test_df$dance_p_fdr < opt$alpha
+pc_test_df$intervention_p_fdr <- p.adjust(pc_test_df$intervention_p, method="fdr")
+pc_test_df$significant <- pc_test_df$intervention_p_fdr < opt$alpha
 write.csv(pc_test_df, file.path(opt$outdir, "pca_component_group_tests.csv"), row.names=FALSE)
 
 # ------------------------------------------------------------------------
@@ -187,15 +187,15 @@ write.csv(pc_test_df, file.path(opt$outdir, "pca_component_group_tests.csv"), ro
 con <- file(file.path(opt$outdir, "summary.txt"), open="wt")
 on.exit(close(con), add=TRUE)
 cat(sprintf(
-  "Multivariate pattern analysis: %s -> %s change scores across %d ROIs\n\nSubjects: %d\n\n1. MANOVA (Pillai's trace): joint test of dance vs control across the ROI pattern\n   p = %s\n\n2. PCA (Kaiser criterion, eigenvalue > 1): %d components retained, %.1f%% variance explained\n   Per-component group tests (FDR-corrected across components):\n",
+  "Multivariate pattern analysis: %s -> %s change scores across %d ROIs\n\nSubjects: %d\n\n1. MANOVA (Pillai's trace): joint test of intervention vs control across the ROI pattern\n   p = %s\n\n2. PCA (Kaiser criterion, eigenvalue > 1): %d components retained, %.1f%% variance explained\n   Per-component group tests (FDR-corrected across components):\n",
   baseline_ses, final_ses, length(change_cols), nrow(dat),
-  if(length(dance_manova_p)) format(dance_manova_p, digits=4) else "NA",
+  if(length(intervention_manova_p)) format(intervention_manova_p, digits=4) else "NA",
   n_keep, 100*sum(var_explained[seq_len(n_keep)])
 ), file=con)
 for (i in seq_len(nrow(pc_test_df))) {
   row <- pc_test_df[i, ]
-  cat(sprintf("   - %s (%.1f%% var): dance effect = %.4f, p = %.4f, p_fdr = %.4f%s\n",
-              row$component, 100*row$variance_explained, row$dance_estimate, row$dance_p, row$dance_p_fdr,
+  cat(sprintf("   - %s (%.1f%% var): intervention effect = %.4f, p = %.4f, p_fdr = %.4f%s\n",
+              row$component, 100*row$variance_explained, row$intervention_estimate, row$intervention_p, row$intervention_p_fdr,
               if (row$significant) " *" else ""), file=con)
 }
 cat("\nSee pca_loadings.csv for which ROIs drive each component (same-sign loadings\n",
