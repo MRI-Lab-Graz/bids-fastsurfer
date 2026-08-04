@@ -165,10 +165,26 @@ run_group <- function(hemi, subfield_name, grid_ids) {
             file.path(opt$outdir, paste0(label, "_change_score_matrix.csv")), row.names=FALSE)
 
   # 1. MANOVA
-  manova_fit <- manova(Y ~ intervention + age_z + sex, data=dat)
-  manova_summary <- as.data.frame(summary(manova_fit, test="Pillai")$stats)
-  manova_p <- manova_summary["intervention", "Pr(>F)"]
-  manova_pillai <- manova_summary["intervention", "Pillai"]
+  # MANOVA needs residual df >= number of response variables (grid points);
+  # with a whole subfield's grid points as the feature set (can be >100) and
+  # this cohort's subject count, that condition often fails -- unlike
+  # 28_cortical_cluster_multivariate.R's clusters, which only ever have a
+  # handful of whole-ROI columns. Skip MANOVA for that group rather than
+  # letting summary.manova()'s error halt the whole script; PCA and PLS-DA
+  # below are unaffected (both handle p > n natively).
+  manova_p <- NA_real_
+  manova_pillai <- NA_real_
+  manova_fit <- tryCatch(manova(Y ~ intervention + age_z + sex, data=dat), error=function(e) NULL)
+  if (!is.null(manova_fit)) {
+    manova_summary <- tryCatch(as.data.frame(summary(manova_fit, test="Pillai")$stats), error=function(e) NULL)
+    if (!is.null(manova_summary) && "intervention" %in% rownames(manova_summary)) {
+      manova_p <- manova_summary["intervention", "Pr(>F)"]
+      manova_pillai <- manova_summary["intervention", "Pillai"]
+    }
+  }
+  if (is.na(manova_p)) {
+    msg("[%s] MANOVA not identifiable (residual df < %d grid-point features); reporting PCA/PLS-DA only\n", label, length(grid_cols))
+  }
 
   # 2. PCA on covariate-residualized change scores
   resid_mat <- sapply(grid_cols, function(col) residuals(lm(as.formula(paste0("`", col, "` ~ age_z + sex")), data=dat)))

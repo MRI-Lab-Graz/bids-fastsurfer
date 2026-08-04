@@ -105,7 +105,6 @@ def main() -> None:
     print(f"Wrote {outpath} ({len(out_rows)} grid points)")
     print(f"  dropped {n_dropped_unlabeled} points whose majority label was 'unlabeled'")
     print(f"  dropped {n_dropped_agreement} points below --min-agreement={args.min_agreement} (boundary-adjacent)")
-    subfield_counts = Counter(r["subfield"] for r in out_rows)
     for hemi in sorted({r["hemisphere"] for r in out_rows}):
         counts = Counter(r["subfield"] for r in out_rows if r["hemisphere"] == hemi)
         print(f"  {hemi}: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))

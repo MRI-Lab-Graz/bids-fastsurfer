@@ -145,6 +145,13 @@ def main() -> None:
         default="missing_hipsta_subjects.tsv",
         help="Filename (in --outdir) logging subjects/sessions/hemispheres missing thickness output [default: %(default)s]",
     )
+    p.add_argument(
+        "--subject-id-map",
+        default=None,
+        help="Optional path to a short_id/long_id/match_type TSV (from scripts/build_hipsta_subject_id_map.py). "
+        "If given, output subject_id/fsid use long_id instead of the hipsta directory's own ID, and short IDs "
+        "with no (unambiguous) mapping are skipped and logged to --missing-log rather than emitted under the wrong identity.",
+    )
     args = p.parse_args()
 
     hipsta_dir = Path(args.hipsta_dir)
@@ -154,6 +161,15 @@ def main() -> None:
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+
+    id_map: Optional[Dict[str, str]] = None
+    if args.subject_id_map:
+        id_map = {}
+        with open(args.subject_id_map, newline="") as f:
+            for row in csv.DictReader(f, delimiter="\t"):
+                if row["long_id"]:
+                    id_map[row["short_id"]] = row["long_id"]
+        print(f"Loaded subject ID map: {len(id_map)} usable entries from {args.subject_id_map}", file=sys.stderr)
 
     sessions = find_sessions(hipsta_dir)
     if not sessions:
@@ -165,6 +181,19 @@ def main() -> None:
     missing: List[Dict[str, str]] = []
 
     for subject_base, session, session_dir in sessions:
+        if id_map is not None:
+            mapped_id = id_map.get(subject_base)
+            if mapped_id is None:
+                missing.append(
+                    {
+                        "subject_id": subject_base,
+                        "session": session,
+                        "hemisphere": "both",
+                        "reason": "no unambiguous entry for this short ID in --subject-id-map",
+                    }
+                )
+                continue
+            subject_base = mapped_id
         fsid = f"{subject_base}_{session}"
 
         for hemi in ("lh", "rh"):
