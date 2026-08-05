@@ -219,6 +219,13 @@ for (hemi in sort(unique(merged$hemisphere))) {
   dat <- merge(data.frame(subject_id=subj_ids, stringsAsFactors=FALSE),
                participants[, c("subject_id","intervention","age_z","sex")], by="subject_id")
   dat <- dat[!is.na(dat$intervention), , drop=FALSE]
+  # participants$sex was factored over the full participants file (which has
+  # a third "n/a" level for a few subjects with no recorded sex) -- if this
+  # hemisphere's actual complete-case subset happens to contain none of
+  # those subjects, the stale "n/a" level survives as an all-zero column in
+  # model.matrix() below, making X'X exactly singular. Drop unused levels
+  # against the subset actually being modelled, as 29/30 already do.
+  dat$sex <- droplevels(dat$sex)
   Y_full <- Y_full[dat$subject_id, , drop=FALSE]
   complete_points <- colSums(is.na(Y_full)) == 0
   Y <- Y_full[, complete_points, drop=FALSE]

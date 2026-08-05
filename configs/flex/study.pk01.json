@@ -1,0 +1,122 @@
+{
+  "study": {
+    "id": "pk01",
+    "label": "129 PK01 running intervention, 2-timepoint FreeSurfer 8.2.0"
+  },
+
+  "datasets": {
+    "freesurfer": {
+      "path": "/data/local/129_PK01/derivatives/freesurfer_hpc",
+      "datalad": true,
+      "dir_pattern": "^(?P<base>sub-[^/_]+)_(?P<ses>ses-[^/]+)\\.long\\.(?P=base)$",
+      "subject_id_map": "configs/hipsta_subject_id_map.tsv"
+    },
+    "hipsta": {
+      "path": "/data/local/129_PK01/derivatives/hipsta",
+      "datalad": false,
+      "subject_id_map": "configs/hipsta_subject_id_map.tsv"
+    }
+  },
+
+  "sessions": {
+    "include": ["ses-1", "ses-2"],
+    "baseline": "ses-1"
+  },
+
+  "measures": [
+    {
+      "name": "hippo",
+      "dataset": "freesurfer",
+      "source": "hippo-amygdala",
+      "profile": "volume",
+      "region_filter": { "prefix": "hippo:" },
+      "roi_set": ["Whole_hippocampus", "GC-ML-DG", "CA1", "CA3", "CA4", "subiculum", "molecular_layer_HP"]
+    },
+    {
+      "name": "amygdala",
+      "dataset": "freesurfer",
+      "source": "hippo-amygdala",
+      "profile": "volume",
+      "region_filter": { "prefix": "amygdala:" },
+      "roi_set": "all"
+    },
+    {
+      "name": "thalamic",
+      "dataset": "freesurfer",
+      "source": "thalamus",
+      "profile": "volume",
+      "roi_set": "all"
+    },
+    {
+      "name": "brainstem",
+      "dataset": "freesurfer",
+      "source": "brainstem",
+      "profile": "volume_midline",
+      "roi_set": "all"
+    },
+    {
+      "name": "cortex",
+      "dataset": "freesurfer",
+      "source": "aparc.a2009s",
+      "metric": "ThickAvg",
+      "profile": "thickness",
+      "roi_set": "all",
+      "region_groups": "configs/destrieux_functional_clusters.tsv"
+    },
+    {
+      "name": "hippo_thick",
+      "dataset": "hipsta",
+      "source": "hipsta",
+      "profile": "thickness",
+      "roi_set": ["presubiculum", "subiculum", "CA1", "CA2_CA3"],
+      "pointwise": true
+    }
+  ],
+
+  "design": {
+    "participants": "/data/local/129_PK01/participants_jamovi127.tsv",
+    "roles": {
+      "subject": "subject_id",
+      "group": "group",
+      "age": "age",
+      "sex": "sex"
+    },
+    "contrasts": {
+      "intervention": ["Single_2wk", "Single_4wk", "Group_2wk", "Group_4wk"],
+      "control": ["Control"]
+    },
+    "factorial": {
+      "social":   { "alone": ["Single_2wk", "Single_4wk"], "group": ["Group_2wk", "Group_4wk"] },
+      "duration": { "2wk": ["Single_2wk", "Group_2wk"], "4wk": ["Single_4wk", "Group_4wk"] },
+      "group3":   { "Control": ["Control"], "Solo": ["Single_2wk", "Single_4wk"], "Group": ["Group_2wk", "Group_4wk"] }
+    },
+    "covariates": [
+      { "col": "age", "type": "numeric", "transform": "rank_z", "as": "age_z" },
+      { "col": "sex", "type": "factor" }
+    ],
+    "moderators": {
+      "file": "/data/local/129_PK01/moderators_baseline.tsv",
+      "baseline_cols": ["ads_score", "panas_pa", "panas_na", "tsdz_total", "fsozu_mean", "stai_total"]
+    }
+  },
+
+  "analyses": [
+    { "test": "lmm",           "measures": ["hippo", "amygdala", "thalamic", "brainstem", "cortex", "hippo_thick"] },
+    { "test": "change_ancova", "measures": ["hippo"] },
+    { "test": "multivariate",  "measures": ["hippo", "cortex"] },
+    { "test": "loso",          "measures": ["hippo"] },
+    { "test": "moderator",     "measures": ["hippo"], "moderators": "all" },
+    { "test": "factorial",     "measures": ["hippo", "hippo_thick"] },
+    { "test": "rm_anova", "id": "rm_anova_afex", "measures": ["hippo"], "engine": "afex" },
+    { "test": "rm_anova", "id": "rm_anova_colleague_replication", "measures": ["hippo"], "engine": "afex",
+      "between": "group3", "interaction_factors": ["group3", "time_f", "hemisphere"] },
+    { "test": "rm_anova", "id": "rm_anova_colleague_cesd", "measures": ["hippo"], "engine": "lmm_interaction",
+      "factors": ["hemisphere", "time_f", "group3"], "continuous_moderator": "ads_score" }
+  ],
+
+  "output": {
+    "root": "results/flex/pk01",
+    "alpha": 0.05,
+    "fdr_within": "measure"
+  }
+}

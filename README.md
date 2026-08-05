@@ -541,6 +541,23 @@ python scripts/generate_qdec.py \
 
 After creating the links, `asegstats2table --qdec-long` will be able to find `stats/aseg.stats` under the expected names.
 
+## Portable analysis stream ("flex")
+
+`scripts/analysis/*.R` above is the reviewed statistical battery for the
+**current study** — it stays as-is. A second, general implementation of the
+same battery lives under `scripts/flex/`, driven by one JSON definition
+file per study (`configs/flex/study.<id>.json`) instead of a fork of the
+scripts. It covers DataLad ingest, tidy extraction, and most of the test
+battery, verified to reproduce the original scripts' numbers exactly. See
+[`docs/FLEX_PIPELINE.md`](docs/FLEX_PIPELINE.md) for the concepts, or
+[`docs/FLEX_WALKTHROUGH.md`](docs/FLEX_WALKTHROUGH.md) for a hands-on,
+worked-example guide to running it and porting a new study.
+
+```bash
+python scripts/flex/run_study.py --config configs/flex/study.pk01.json --validate-only
+python scripts/flex/run_study.py --config configs/flex/study.pk01.json
+```
+
 ## Credits and License
 
 - FastSurfer is developed by the FastSurfer team; see their documentation for details and licensing.
