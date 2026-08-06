@@ -541,22 +541,15 @@ python scripts/generate_qdec.py \
 
 After creating the links, `asegstats2table --qdec-long` will be able to find `stats/aseg.stats` under the expected names.
 
-## Portable analysis stream ("flex")
+## Statistical analysis
 
-`scripts/analysis/*.R` above is the reviewed statistical battery for the
-**current study** — it stays as-is. A second, general implementation of the
-same battery lives under `scripts/flex/`, driven by one JSON definition
-file per study (`configs/flex/study.<id>.json`) instead of a fork of the
-scripts. It covers DataLad ingest, tidy extraction, and most of the test
-battery, verified to reproduce the original scripts' numbers exactly. See
-[`docs/FLEX_PIPELINE.md`](docs/FLEX_PIPELINE.md) for the concepts, or
-[`docs/FLEX_WALKTHROUGH.md`](docs/FLEX_WALKTHROUGH.md) for a hands-on,
-worked-example guide to running it and porting a new study.
-
-```bash
-python scripts/flex/run_study.py --config configs/flex/study.pk01.json --validate-only
-python scripts/flex/run_study.py --config configs/flex/study.pk01.json
-```
+This repo handles preprocessing only (FastSurfer/FreeSurfer, subfield/
+subregion segmentation, hipsta, QC). Statistical analysis of the resulting
+output — both the frozen, reviewed per-study battery and a general,
+config-driven pipeline for onboarding new studies — lives in a separate
+repo: **[MRI-Lab-Graz/flex-analysis](https://github.com/MRI-Lab-Graz/flex-analysis)**.
+It starts from wherever this repo's output ends up (a local directory or a
+DataLad sibling) and never touches preprocessing itself.
 
 ## Credits and License
 

@@ -3,8 +3,10 @@
 # https://github.com/Deep-MI/Hipsta) over a directory of longitudinal
 # FreeSurfer subfield segmentations. Companion to run_subfield_segmentation.sh
 # (which produces the volume-based hippoSfVolumes.long.txt files consumed by
-# scripts/extract_hippo_subfields.py); this script's output feeds
-# scripts/extract_hipsta_thickness.py instead.
+# extract_hippo_subfields.py); this script's output feeds
+# extract_hipsta_thickness.py instead -- both now live in the
+# MRI-Lab-Graz/flex-analysis repo, since this repo only produces
+# preprocessing output, not analysis of it.
 #
 # Usage: ./run_hipsta_segmentation.sh [options]
 #

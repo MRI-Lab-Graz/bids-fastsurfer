@@ -14,11 +14,11 @@ scripts/analysis/*.R) keys on the long-form ID used throughout the local
 derivatives tree instead: sub-129<G><NNN>, where G is a single digit
 (1=Single, 2=Group, 3=Control) and NNN is the short numeric ID, zero-padded
 to 3 digits. This script performs that one conversion, then emits both
-output shapes already used elsewhere in the repo:
+output shapes used by the analysis stream (MRI-Lab-Graz/flex-analysis):
 
   - tidy long TSV   (one row per subject/session/hemisphere/region) --
     same column conventions as extract_hippo_subfields.py /
-    extract_amygdala_subfields.py, for scripts/analysis/*.R
+    extract_amygdala_subfields.py, for scripts/analysis/*.R there
   - wide TSV        (one row per subject-session, one column per region) --
     same shape as the *.long.table files, directly importable into SPSS
 
