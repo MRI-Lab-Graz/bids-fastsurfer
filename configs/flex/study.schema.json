@@ -83,16 +83,20 @@
     },
 
     "profiles": {
-      "description": "Custom measure profiles, merged with the built-ins (volume, thickness, volume_midline). Each profile is exactly {transform, etiv_covariate, hemisphere}.",
+      "description": "Custom measure profiles, merged with the built-ins (volume, thickness, volume_midline). Each profile is exactly {transform, etiv_covariate, hemisphere, aggregate}.",
       "type": "object",
       "additionalProperties": {
         "type": "object",
-        "required": ["transform", "etiv_covariate", "hemisphere"],
+        "required": ["transform", "etiv_covariate", "hemisphere", "aggregate"],
         "additionalProperties": false,
         "properties": {
           "transform": {"type": "string", "enum": ["log", "identity"]},
           "etiv_covariate": {"type": "boolean"},
-          "hemisphere": {"type": "string", "enum": ["pooled", "none"]}
+          "hemisphere": {"type": "string", "enum": ["pooled", "none"]},
+          "aggregate": {
+            "type": "string", "enum": ["sum", "mean"],
+            "description": "FUN used to collapse multiple raw rows per ROI (e.g. head/body) into one value: 'sum' for physically-additive measures (volume), 'mean' for non-additive ones (thickness)."
+          }
         }
       }
     },
@@ -171,9 +175,9 @@
             "type": "string",
             "enum": [
               "lmm", "change_ancova", "multivariate", "loso", "moderator",
-              "factorial", "rm_anova", "time_pattern", "coupled_change",
-              "heterogeneity", "traj_clusters", "pointwise", "hierarchical",
-              "ml", "lgm"
+              "factorial", "rm_anova", "age_interaction", "time_pattern",
+              "coupled_change", "heterogeneity", "traj_clusters", "pointwise",
+              "hierarchical", "ml", "lgm"
             ]
           },
           "measures": {"type": "array", "items": {"type": "string"}, "minItems": 1}

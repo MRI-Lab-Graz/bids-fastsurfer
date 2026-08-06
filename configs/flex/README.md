@@ -47,7 +47,13 @@ reference.
 | `pointwise` | no | For `source: "hipsta"`: also emit a grid-point-level companion tidy file |
 
 ### `profiles.<name>` (optional, extends the three built-ins)
-`{transform: "log"|"identity", etiv_covariate: true|false, hemisphere: "pooled"|"none"}`
+`{transform: "log"|"identity", etiv_covariate: true|false, hemisphere: "pooled"|"none", aggregate: "sum"|"mean"}`
+
+`aggregate` is the FUN used to collapse multiple raw rows per ROI (e.g.
+head/body, or both hemispheres when a test pools them) into one value:
+`"sum"` for physically-additive measures (volume), `"mean"` for
+non-additive ones (thickness) — get this wrong and per-subject values in
+output like `change_score_matrix.csv` are silently in the wrong units.
 
 ### `design`
 | Field | Required | Description |
@@ -65,10 +71,10 @@ reference.
 ### `analyses[]`
 | Field | Required | Description |
 |---|---|---|
-| `test` | yes | One of `lmm`, `change_ancova`, `multivariate`, `moderator`, `factorial`, `loso`, `rm_anova` (others are schema-valid but not yet implemented — see docs/FLEX_PIPELINE.md) |
+| `test` | yes | One of `lmm`, `change_ancova`, `multivariate`, `moderator`, `factorial`, `loso`, `rm_anova`, `age_interaction` (others are schema-valid but not yet implemented — see docs/FLEX_PIPELINE.md) |
 | `measures` | yes | Measure names to run this test against |
 | `id` | no | Output-folder discriminator (`<id>_<measure>`) when multiple analyses share one test type against one measure (e.g. two differently-configured `rm_anova` runs) |
-| *(test-specific)* | no | e.g. `moderators` (moderator), `factorial_axes` (factorial), `engine`/`between`/`interaction_factors`/`factors`/`continuous_moderator` (rm_anova), `keep_hemisphere_separate` (multivariate) — see each module's header comment in `scripts/flex/R/test_*.R` |
+| *(test-specific)* | no | e.g. `moderators` (moderator), `factorial_axes` (factorial), `engine`/`between`/`interaction_factors`/`factors`/`continuous_moderator` (rm_anova), `keep_hemisphere_separate` (multivariate), `mode`/`factorial_axes`/`moderators` (age_interaction) — see each module's header comment in `scripts/flex/R/test_*.R` |
 
 ### `output`
 | Field | Required | Description |

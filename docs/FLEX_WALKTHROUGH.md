@@ -347,7 +347,81 @@ found.
 
 ---
 
-## 5. Troubleshooting
+## 5. One test, two measure types: volume vs. thickness
+
+This is the concrete payoff of the `profile` mechanism, not just a claim
+about it. The original battery has near-duplicate scripts for hippocampal
+subfield *volume* vs. *thickness* — `08_moderator_analysis.R` /
+`33_hippo_thickness_moderator_analysis.R`, `23_hem_time_group_cesd.R` /
+`36_hippo_thickness_hem_time_group_cesd.R`, `19_age_x_social_duration.R` /
+`34_hippo_thickness_age_x_social_duration.R`, and so on — that differ
+*only* in the volume-vs-thickness details the `profile` already encodes
+(log-transform, eTIV covariate, aggregation FUN). In `flex`, one module
+runs both:
+
+```json
+{ "test": "moderator", "measures": ["hippo", "hippo_thick"], "moderators": "all" }
+```
+
+Real output, side by side (same command, same run, just a different
+`measure` picking up the `hippo` (`volume` profile) vs. `hippo_thick`
+(`thickness` profile) tidy table):
+
+```bash
+Rscript scripts/flex/R/run_analysis.R --config configs/flex/study.pk01.json \
+  --only moderator --measures hippo,hippo_thick
+```
+```
+[moderator/hippo] testing 8 candidate moderator(s) across 7 ROI(s)
+[moderator/hippo_thick] testing 8 candidate moderator(s) across 4 ROI(s)
+```
+
+`results/moderator_hippo/summary.csv` and
+`results/moderator_hippo_thick/summary.csv` are produced by the exact same
+R code (`test_moderator.R`), diffed against `08_moderator_analysis.R` and
+`33_hippo_thickness_moderator_analysis.R` respectively — both matched
+their original script's p-values to ~1e-11.
+
+Same story for `rm_anova`'s `lmm_interaction` engine (23 vs. 36):
+```json
+{ "test": "rm_anova", "id": "rm_anova_colleague_cesd", "measures": ["hippo", "hippo_thick"],
+  "engine": "lmm_interaction", "factors": ["hemisphere", "time_f", "group3"],
+  "continuous_moderator": "ads_score" }
+```
+
+And for `age_interaction` (new module, replacing 19/20 for volume and
+34/35 for thickness):
+```json
+{ "test": "age_interaction", "id": "age_interaction_pairwise", "measures": ["hippo", "hippo_thick"],
+  "mode": "pairwise", "factorial_axes": ["social", "duration"] },
+{ "test": "age_interaction", "id": "age_interaction_threeway", "measures": ["hippo", "hippo_thick"],
+  "mode": "threeway_intervention", "moderators": "all" }
+```
+`mode: "pairwise"` tests age x each factorial axis (2-way terms only, no
+3-way — real output from `age_interaction_pairwise_hippo_thick`):
+```
+roi,n_obs,n_subjects,age_x_social_p,age_x_duration_p,...
+CA1,170,85,0.894,0.119,...
+```
+`mode: "threeway_intervention"` tests the full intervention x age x
+third-variable interaction, once per third variable (sex, plus every
+`design.moderators.baseline_cols` column):
+```
+third_var,roi,n_obs,interaction_p,interaction_p_fdr,significant
+sex,CA1,254,0.215,0.430,FALSE
+```
+
+**The general pattern**: if you're adding a new *measure* that's
+conceptually a volume or a thickness (or genuinely something else — define
+a custom profile), you very likely don't need a new test module at all.
+Add the measure, list it under whichever `analyses[].measures` you want to
+test, done. A new module is only needed for a genuinely new *statistical
+design* (a new formula shape), not a new brain region or a new unit of
+measurement.
+
+---
+
+## 6. Troubleshooting
 
 | Symptom | Likely cause | Where to look |
 |---|---|---|
@@ -362,7 +436,7 @@ found.
 
 ---
 
-## 6. Where to go next
+## 7. Where to go next
 
 - **Concepts** (profiles, why each test module exists, parity methodology): [`FLEX_PIPELINE.md`](FLEX_PIPELINE.md)
 - **Field-by-field schema reference**: [`configs/flex/README.md`](../configs/flex/README.md)

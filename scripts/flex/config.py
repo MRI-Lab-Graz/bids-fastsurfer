@@ -23,14 +23,21 @@ from typing import Any, Dict
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPO_ROOT / "configs" / "flex" / "study.schema.json"
 
-# Built-in measure profiles: {transform, etiv_covariate, hemisphere}.
+# Built-in measure profiles: {transform, etiv_covariate, hemisphere, aggregate}.
 # See docs/FLEX_PIPELINE.md for the rationale behind each one -- carried
 # over verbatim from 01_primary_lmm.R (volume) and 29_hippo_thickness_lmm.R
 # / 25_brainstem_lmm.R (thickness / volume_midline).
+#
+# `aggregate` is the FUN used when a measure's ROI has multiple raw rows
+# per subject/session/hemisphere (e.g. hippo subfields' head/body split):
+# volumes are physically additive (sum), thickness is not (mean) -- this
+# is a real, consistent convention across every original script (01/08
+# aggregate volume with FUN=sum; 27/29/33 aggregate thickness with
+# FUN=mean), not a stylistic choice.
 BUILTIN_PROFILES: Dict[str, Dict[str, Any]] = {
-    "volume": {"transform": "log", "etiv_covariate": True, "hemisphere": "pooled"},
-    "thickness": {"transform": "identity", "etiv_covariate": False, "hemisphere": "pooled"},
-    "volume_midline": {"transform": "log", "etiv_covariate": True, "hemisphere": "none"},
+    "volume": {"transform": "log", "etiv_covariate": True, "hemisphere": "pooled", "aggregate": "sum"},
+    "thickness": {"transform": "identity", "etiv_covariate": False, "hemisphere": "pooled", "aggregate": "mean"},
+    "volume_midline": {"transform": "log", "etiv_covariate": True, "hemisphere": "none", "aggregate": "sum"},
 }
 
 

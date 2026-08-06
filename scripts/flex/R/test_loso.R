@@ -13,7 +13,7 @@ flex_run_loso <- function(cfg, measure_name, spec, outdir) {
   roi_column <- dp$roi_column
   alpha <- flex_alpha(cfg)
 
-  agg <- flex_aggregate_roi(tidy, roi_column)
+  agg <- flex_aggregate_roi(tidy, roi_column, profile$aggregate)
   if (isTRUE(profile$etiv_covariate)) {
     etiv_lookup <- flex_baseline_etiv(tidy, cfg$sessions$baseline)
     agg <- merge(agg, etiv_lookup, by = "subject_id", all.x = TRUE)
@@ -98,11 +98,16 @@ flex_run_loso <- function(cfg, measure_name, spec, outdir) {
   utils::write.csv(influence_summary, file.path(outdir, "loso_influence_summary.csv"), row.names = FALSE)
 
   # --- Part 2: MANOVA joint pattern test LOSO -----------------------------
-  # Deliberately summed across hemisphere too (unlike Part 1's agg) --
+  # Deliberately pooled across hemisphere too (unlike Part 1's agg) --
   # matches 07's group_cols = c(subject_id, session, subfield), no
   # hemisphere -- one change score per subject per ROI, as MANOVA needs.
+  # profile$aggregate (sum for volume, mean for thickness) applies here
+  # exactly as it does to the head/body pooling -- summing two hemispheres'
+  # thickness values isn't a meaningful quantity the way summing two
+  # hemispheres' volumes is.
+  agg_sum_fun <- switch(profile$aggregate, "sum" = sum, "mean" = mean)
   agg_sum_formula <- stats::as.formula(paste("value ~ subject_id + session +", roi_column))
-  agg_sum <- stats::aggregate(agg_sum_formula, data = tidy, FUN = sum)
+  agg_sum <- stats::aggregate(agg_sum_formula, data = tidy, FUN = agg_sum_fun)
   agg_sum$y <- flex_apply_profile_transform(agg_sum$value, profile)
   base_vals <- agg_sum[agg_sum$session == baseline_ses, c("subject_id", roi_column, "y")]
   final_vals <- agg_sum[agg_sum$session == final_ses, c("subject_id", roi_column, "y")]

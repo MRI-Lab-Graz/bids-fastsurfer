@@ -68,12 +68,20 @@ flex_select_roi <- function(tidy, roi_set, roi_column = "region") {
 # FUN=sum)` -- subfield identity is already head/body-collapsed by
 # extract_freesurfer.py's `region` column (hippo_base_name()), so rows
 # differing only in the stripped head/body suffix land in the same group
-# here and get summed into one subfield-total. For measures with no
+# here and get aggregated into one subfield value. For measures with no
 # head/body split (aseg/thalamus/brainstem/cortex), every group already has
-# exactly one row, so the sum is a no-op -- safe to apply unconditionally.
-flex_aggregate_roi <- function(tidy, roi_column = "region") {
+# exactly one row, so the aggregation is a no-op regardless of FUN.
+#
+# `fun` MUST match the profile's `aggregate` field (flex_resolve_profile()):
+# "sum" for physically-additive measures (volume -- 01/08's own
+# aggregate(..., FUN=sum)), "mean" for non-additive ones (thickness --
+# 27/29/33's own aggregate(..., FUN=mean)). Defaults to sum only for
+# direct/manual callers; every test_*.R module must pass profile$aggregate
+# explicitly rather than relying on this default.
+flex_aggregate_roi <- function(tidy, roi_column = "region", fun = "sum") {
+  fun_r <- switch(fun, "sum" = sum, "mean" = mean, stop(sprintf("unknown aggregate fun '%s' (known: sum, mean)", fun)))
   f <- as.formula(paste("value ~ subject_id + session + hemisphere +", roi_column))
-  stats::aggregate(f, data = tidy, FUN = sum)
+  stats::aggregate(f, data = tidy, FUN = fun_r)
 }
 
 # eTIV varies slightly session-to-session (FreeSurfer re-estimation noise,

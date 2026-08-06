@@ -48,7 +48,7 @@ flex_run_rm_anova_afex <- function(cfg, measure_name, spec, outdir) {
   profile <- dp$profile
   roi_column <- dp$roi_column
 
-  agg <- flex_aggregate_roi(tidy, roi_column)
+  agg <- flex_aggregate_roi(tidy, roi_column, profile$aggregate)
   participants <- flex_load_participants(cfg)
   agg <- merge(agg, participants, by = "subject_id")
 
@@ -111,7 +111,7 @@ flex_run_rm_anova_lmm_interaction <- function(cfg, measure_name, spec, outdir) {
   profile <- dp$profile
   roi_column <- dp$roi_column
 
-  agg <- flex_aggregate_roi(tidy, roi_column)
+  agg <- flex_aggregate_roi(tidy, roi_column, profile$aggregate)
   if (isTRUE(profile$etiv_covariate)) {
     etiv_lookup <- flex_baseline_etiv(tidy, cfg$sessions$baseline)
     agg <- merge(agg, etiv_lookup, by = "subject_id", all.x = TRUE)

@@ -17,9 +17,9 @@ suppressPackageStartupMessages(library(jsonlite))
 # eTIV covariate) carries forward 01_primary_lmm.R's header rationale,
 # "thickness" (raw scale, no eTIV) carries forward 29_hippo_thickness_lmm.R's.
 flex_builtin_profiles <- list(
-  volume          = list(transform = "log",      etiv_covariate = TRUE,  hemisphere = "pooled"),
-  thickness       = list(transform = "identity", etiv_covariate = FALSE, hemisphere = "pooled"),
-  volume_midline  = list(transform = "log",      etiv_covariate = TRUE,  hemisphere = "none")
+  volume          = list(transform = "log",      etiv_covariate = TRUE,  hemisphere = "pooled", aggregate = "sum"),
+  thickness       = list(transform = "identity", etiv_covariate = FALSE, hemisphere = "pooled", aggregate = "mean"),
+  volume_midline  = list(transform = "log",      etiv_covariate = TRUE,  hemisphere = "none",   aggregate = "sum")
 )
 
 flex_load_config <- function(path) {

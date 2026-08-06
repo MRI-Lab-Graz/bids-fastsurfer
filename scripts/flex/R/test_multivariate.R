@@ -15,7 +15,12 @@
 flex_run_one_multivariate <- function(cfg, tidy, profile, roi_column, covariate_terms, alpha, outdir, keep_hemisphere_separate = FALSE) {
   group_cols <- if (isTRUE(keep_hemisphere_separate)) c("subject_id", "session", "hemisphere", roi_column) else c("subject_id", "session", roi_column)
   f <- stats::as.formula(paste("value ~", paste(group_cols, collapse = " + ")))
-  agg <- stats::aggregate(f, data = tidy, FUN = sum)
+  # profile$aggregate: sum for volume (matches 06's own convention -- total
+  # bilateral volume across hemisphere and head/body), mean for thickness
+  # (summing two hemispheres' or head/body's thickness isn't a meaningful
+  # quantity the way summing volumes is).
+  agg_fun <- switch(profile$aggregate, "sum" = sum, "mean" = mean)
+  agg <- stats::aggregate(f, data = tidy, FUN = agg_fun)
 
   sessions <- sort(unique(agg$session))
   baseline_ses <- cfg$sessions$baseline %||% sessions[1]

@@ -22,7 +22,7 @@ flex_run_lmm <- function(cfg, measure_name, spec, outdir) {
   profile <- dp$profile
   roi_column <- dp$roi_column
 
-  agg <- flex_aggregate_roi(tidy, roi_column)
+  agg <- flex_aggregate_roi(tidy, roi_column, profile$aggregate)
 
   if (isTRUE(profile$etiv_covariate)) {
     etiv_lookup <- flex_baseline_etiv(tidy, cfg$sessions$baseline)

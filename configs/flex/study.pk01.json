@@ -105,13 +105,17 @@
     { "test": "change_ancova", "measures": ["hippo"] },
     { "test": "multivariate",  "measures": ["hippo", "cortex"] },
     { "test": "loso",          "measures": ["hippo"] },
-    { "test": "moderator",     "measures": ["hippo"], "moderators": "all" },
+    { "test": "moderator",     "measures": ["hippo", "hippo_thick"], "moderators": "all" },
     { "test": "factorial",     "measures": ["hippo", "hippo_thick"] },
     { "test": "rm_anova", "id": "rm_anova_afex", "measures": ["hippo"], "engine": "afex" },
     { "test": "rm_anova", "id": "rm_anova_colleague_replication", "measures": ["hippo"], "engine": "afex",
       "between": "group3", "interaction_factors": ["group3", "time_f", "hemisphere"] },
-    { "test": "rm_anova", "id": "rm_anova_colleague_cesd", "measures": ["hippo"], "engine": "lmm_interaction",
-      "factors": ["hemisphere", "time_f", "group3"], "continuous_moderator": "ads_score" }
+    { "test": "rm_anova", "id": "rm_anova_colleague_cesd", "measures": ["hippo", "hippo_thick"], "engine": "lmm_interaction",
+      "factors": ["hemisphere", "time_f", "group3"], "continuous_moderator": "ads_score" },
+    { "test": "age_interaction", "id": "age_interaction_pairwise", "measures": ["hippo", "hippo_thick"],
+      "mode": "pairwise", "factorial_axes": ["social", "duration"] },
+    { "test": "age_interaction", "id": "age_interaction_threeway", "measures": ["hippo", "hippo_thick"],
+      "mode": "threeway_intervention", "moderators": "all" }
   ],
 
   "output": {
